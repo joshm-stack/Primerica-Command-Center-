@@ -80,9 +80,11 @@ async function callClaude(messages, systemPrompt) {
       }),
     });
     const data = await response.json();
-    return data.content?.[0]?.text || 'No response.';
+    if (data.error) return 'Error: ' + data.error;
+    if (data.type === 'error') return 'Error: ' + data.error?.message;
+    return data.content?.[0]?.text || JSON.stringify(data);
   } catch (e) {
-    return 'Error connecting to AI.';
+    return 'Error: ' + e.message;
   }
 }
 
