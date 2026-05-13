@@ -73,15 +73,16 @@ async function callClaude(messages, systemPrompt) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: claude-sonnet-4-5,
         max_tokens: 1000,
         system: systemPrompt,
         messages,
       }),
     });
     const data = await response.json();
-    if (data.error) return 'Error: ' + JSON.stringify(data.error);
-    return data.content?.[0]?.text || 'No response.';
+    if (data.error) return 'Error: ' + data.error;
+    if (data.type === 'error') return 'Error: ' + data.error?.message;
+    return data.content?.[0]?.text || JSON.stringify(data);
   } catch (e) {
     return 'Error: ' + e.message;
   }
