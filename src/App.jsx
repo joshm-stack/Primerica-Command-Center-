@@ -73,16 +73,15 @@ async function callClaude(messages, systemPrompt) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: claude-sonnet-4-5,
+        model: 'claude-haiku-4-5',
         max_tokens: 1000,
         system: systemPrompt,
         messages,
       }),
     });
     const data = await response.json();
-    if (data.error) return 'Error: ' + data.error;
-    if (data.type === 'error') return 'Error: ' + data.error?.message;
-    return data.content?.[0]?.text || JSON.stringify(data);
+    if (data.error) return 'Error: ' + JSON.stringify(data.error);
+    return data.content?.[0]?.text || 'No response.';
   } catch (e) {
     return 'Error: ' + e.message;
   }
@@ -186,7 +185,7 @@ export default function App() {
           <div style={{ fontSize: 20, fontWeight: 800, background: 'linear-gradient(90deg, #38bdf8, #818cf8)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Command Center</div>
         </div>
         <div style={{ fontSize: 11, color: '#64748b', textAlign: 'right' }}>
-          <div style={{ color: '#34d399', fontWeight: 600 }}>● Live</div>
+          <div style={{ color: '#34d399', fontWeight: 600 }}>Live</div>
           <div>Miami, FL</div>
         </div>
       </div>
@@ -224,12 +223,12 @@ export default function App() {
                   <button onClick={() => { if (newTodo.trim()) { setTodos([...todos, { id: Date.now(), text: newTodo, done: false }]); setNewTodo(''); } }} style={s.btn()}>+</button>
                 </div>
               </div>
-              {todos.length === 0 && <div style={{ color: '#475569', fontSize: 13 }}>No tasks yet — add your daily goals above</div>}
+              {todos.length === 0 && <div style={{ color: '#475569', fontSize: 13 }}>No tasks yet - add your daily goals above</div>}
               {todos.map(todo => (
                 <div key={todo.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderBottom: '1px solid #1e293b' }}>
                   <input type='checkbox' checked={todo.done} onChange={() => setTodos(todos.map(t => t.id === todo.id ? { ...t, done: !t.done } : t))} />
                   <span style={{ flex: 1, fontSize: 13, textDecoration: todo.done ? 'line-through' : 'none', color: todo.done ? '#475569' : '#e2e8f0' }}>{todo.text}</span>
-                  <button onClick={() => setTodos(todos.filter(t => t.id !== todo.id))} style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 11 }}>✕</button>
+                  <button onClick={() => setTodos(todos.filter(t => t.id !== todo.id))} style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 11 }}>X</button>
                 </div>
               ))}
               {todos.length > 0 && <button onClick={() => setTodos([])} style={{ marginTop: 10, background: 'none', border: 'none', color: '#475569', fontSize: 11, cursor: 'pointer' }}>Clear all</button>}
@@ -267,7 +266,7 @@ export default function App() {
                   <input type='date' value={newLead.followUp} onChange={e => setNewLead({ ...newLead, followUp: e.target.value })} style={s.input} />
                 </div>
                 <select value={newLead.status} onChange={e => setNewLead({ ...newLead, status: e.target.value })} style={{ ...s.input, marginBottom: 10 }}>
-                  {Object.keys(STATUS_COLORS).map(s => <option key={s}>{s}</option>)}
+                  {Object.keys(STATUS_COLORS).map(st => <option key={st}>{st}</option>)}
                 </select>
                 <button onClick={() => { if (!newLead.name) return; setLeads([...leads, { ...newLead, id: Date.now() }]); setNewLead({ name: '', status: 'New', phone: '', note: '', followUp: '' }); setShowAddLead(false); }} style={s.btn('#34d399')}>Save Lead</button>
               </div>
@@ -284,7 +283,7 @@ export default function App() {
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
                     <span style={s.badge(STATUS_COLORS[lead.status])}>{lead.status}</span>
                     <select value={lead.status} onChange={e => setLeads(leads.map(l => l.id === lead.id ? { ...l, status: e.target.value } : l))} style={{ background: '#0a1120', border: '1px solid #1e3a5f', borderRadius: 6, color: '#94a3b8', padding: '4px 8px', fontSize: 11 }}>
-                      {Object.keys(STATUS_COLORS).map(s => <option key={s}>{s}</option>)}
+                      {Object.keys(STATUS_COLORS).map(st => <option key={st}>{st}</option>)}
                     </select>
                     <button onClick={() => setLeads(leads.filter(l => l.id !== lead.id))} style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 11 }}>Remove</button>
                   </div>
@@ -309,7 +308,7 @@ export default function App() {
                   <input type='date' value={newRecruit.followUp} onChange={e => setNewRecruit({ ...newRecruit, followUp: e.target.value })} style={s.input} />
                 </div>
                 <select value={newRecruit.status} onChange={e => setNewRecruit({ ...newRecruit, status: e.target.value })} style={{ ...s.input, marginBottom: 10 }}>
-                  {Object.keys(RECRUIT_COLORS).map(s => <option key={s}>{s}</option>)}
+                  {Object.keys(RECRUIT_COLORS).map(st => <option key={st}>{st}</option>)}
                 </select>
                 <button onClick={() => { if (!newRecruit.name) return; setRecruits([...recruits, { ...newRecruit, id: Date.now() }]); setNewRecruit({ name: '', status: 'Prospect', phone: '', note: '', followUp: '' }); setShowAddRecruit(false); }} style={s.btn('#34d399')}>Save Recruit</button>
               </div>
@@ -326,7 +325,7 @@ export default function App() {
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
                     <span style={s.badge(RECRUIT_COLORS[recruit.status])}>{recruit.status}</span>
                     <select value={recruit.status} onChange={e => setRecruits(recruits.map(r => r.id === recruit.id ? { ...r, status: e.target.value } : r))} style={{ background: '#0a1120', border: '1px solid #1e3a5f', borderRadius: 6, color: '#94a3b8', padding: '4px 8px', fontSize: 11 }}>
-                      {Object.keys(RECRUIT_COLORS).map(s => <option key={s}>{s}</option>)}
+                      {Object.keys(RECRUIT_COLORS).map(st => <option key={st}>{st}</option>)}
                     </select>
                     <button onClick={() => setRecruits(recruits.filter(r => r.id !== recruit.id))} style={{ background: 'none', border: 'none', color: '#475569', cursor: 'pointer', fontSize: 11 }}>Remove</button>
                   </div>
@@ -486,7 +485,7 @@ export default function App() {
                 { label: 'Recruits Licensed', current: stats.licensed, goal: goals.monthlyRecruits, color: '#a78bfa' },
               ].map(p => (
                 <div key={p.label} style={{ marginBottom: 16 }}>
-                  <div style={{ ...s.row, marginBottom: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                     <div style={{ fontSize: 13 }}>{p.label}</div>
                     <div style={{ fontSize: 13, color: p.color }}>{p.current} / {p.goal}</div>
                   </div>
