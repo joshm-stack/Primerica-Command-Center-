@@ -1230,4 +1230,53 @@ export default function App() {
               display:'flex', flexDirection:'column', alignItems:'center', gap:3,
               color: moreIds.includes(tab)?C.blue:C.textSub,
               fontSize:10, padding:'7px 9px', borderRadius:10 }}>
-            <s
+            <span style={{ fontSize:20 }}>⋯</span>
+            <span style={{ fontWeight:moreIds.includes(tab)?700:400 }}>More</span>
+          </button>
+        </div>
+      )}
+
+      {/* Mobile More Tray */}
+      {isMobile && moreOpen && (
+        <>
+          <div onClick={()=>setMoreOpen(false)}
+            style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:190 }}/>
+          <div style={{ position:'fixed', bottom:68, left:0, right:0,
+            background:C.card, borderTop:'1px solid '+C.border,
+            borderRadius:'20px 20px 0 0', zIndex:200, padding:'20px 16px 8px' }}>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
+              {moreIds.map(id=>{
+                const n=NAV.find(x=>x.id===id);
+                return n ? (
+                  <button key={id} onClick={()=>{ setTab(id); setMoreOpen(false); }}
+                    style={{ background:tab===id?C.blue+'20':'none',
+                      border:'1px solid '+(tab===id?C.blue+'40':C.border),
+                      borderRadius:12, padding:'14px 8px', display:'flex',
+                      flexDirection:'column', alignItems:'center', gap:6, cursor:'pointer',
+                      color:tab===id?C.blue:C.textSub, fontSize:11, fontWeight:tab===id?700:400 }}>
+                    <span style={{ fontSize:24 }}>{n.icon}</span>
+                    <span>{n.label}</span>
+                  </button>
+                ) : null;
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Contact / Recruit Modal */}
+      {selectedContact && (
+        <ContactModal
+          contact={selectedContact}
+          isRecruit={!!selectedContact.isRecruit}
+          onClose={()=>setSelectedContact(null)}
+          onSave={selectedContact.isRecruit ? saveRecruit : saveContact}
+          onDelete={selectedContact.isRecruit ? deleteRecruit : deleteContact}
+        />
+      )}
+
+      {/* Toasts */}
+      <Toast toasts={toasts}/>
+    </div>
+  );
+}
