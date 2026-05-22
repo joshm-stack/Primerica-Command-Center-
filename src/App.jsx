@@ -27,6 +27,62 @@ async function dbSet(key, value) {
   } catch {}
 }
 
+// ─── GOOGLE CALENDAR API (via Anthropic MCP proxy) ───────────────────────────
+const GCAL_MCP_URL = 'https://calendarmcp.googleapis.com/mcp/v1';
+
+async function gcalCreateEvent({ summary, startTime, endTime, description, location, colorId }) {
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 1000,
+        mcp_servers: [{ type: 'url', url: GCAL_MCP_URL, name: 'gcal' }],
+        messages: [{ role: 'user', content:
+          `Create a Google Calendar event with these exact details and confirm when done:
+           Title: ${summary}
+           Start: ${startTime}
+           End: ${endTime}
+           ${description ? 'Description: ' + description : ''}
+           ${location ? 'Location: ' + location : ''}
+           ${colorId ? 'Color ID: ' + colorId : ''}
+           Use the create_event tool. Reply only with: CREATED or ERROR.`
+        }]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.find(b => b.type === 'text')?.text || '';
+    return text.includes('CREATED') || text.includes('created') || data.content?.some(b => b.type === 'mcp_tool_result');
+  } catch { return false; }
+}
+
+async function gcalListUpcoming() {
+  try {
+    const now = new Date().toISOString();
+    const future = new Date(Date.now() + 14 * 86400000).toISOString();
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 2000,
+        mcp_servers: [{ type: 'url', url: GCAL_MCP_URL, name: 'gcal' }],
+        messages: [{ role: 'user', content:
+          `List my Google Calendar events from ${now} to ${future}. Use list_events tool. Return ONLY a JSON array (no markdown) of objects with keys: title, start, end, location. If none, return [].`
+        }]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.find(b => b.type === 'text')?.text || '[]';
+    const clean = text.replace(/```json|```/g, '').trim();
+    const start = clean.indexOf('[');
+    const end = clean.lastIndexOf(']');
+    if (start === -1 || end === -1) return [];
+    return JSON.parse(clean.slice(start, end + 1));
+  } catch { return []; }
+}
+
 // ─── ONE-TIME MIGRATION: localStorage → Supabase ─────────────────────────────
 const MIGRATION_KEY = 'josh_migrated_v1';
 async function migrateIfNeeded() {
@@ -404,7 +460,26 @@ function ContactModal({ contact, onClose, onSave, onDelete, isRecruit, leads }) 
   const [note, setNote] = useState('');
   const [confirmDel, setCD] = useState(false);
   const [tab, setTab]   = useState('info');
+  const [gcalPushing, setGcalPushing] = useState(false);
   const upd = (k,v) => setC(prev=>({ ...prev, [k]:v }));
+
+  const pushFollowUpToGcal = async () => {
+    if (!c.followUp) return;
+    setGcalPushing(true);
+    const start = new Date(c.followUp + 'T10:00:00');
+    const end   = new Date(start.getTime() + 30 * 60 * 1000);
+    const ok = await gcalCreateEvent({
+      summary: `📞 Follow-up: ${c.name}`,
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      description: c.notes ? c.notes : 'Primerica follow-up call',
+      colorId: '5',
+    });
+    setGcalPushing(false);
+    // show result via title change — toast not available here so we use alert briefly
+    if (ok) alert('✅ Added to Google Calendar!');
+    else alert('GCal sync failed — try again');
+  };
 
   useEffect(() => {
     const fn = e => { if(e.key==='Escape') onClose(); };
@@ -476,6 +551,18 @@ function ContactModal({ contact, onClose, onSave, onDelete, isRecruit, leads }) 
                 </select>
               </div>
             </div>
+            {/* GCal push for follow-up */}
+            {c.followUp&&(
+              <div style={{ gridColumn:'1/-1', marginBottom:2 }}>
+                <button onClick={pushFollowUpToGcal} disabled={gcalPushing}
+                  style={{ ...btn(C.gTeal,true), display:'flex', alignItems:'center', gap:6, width:'100%', justifyContent:'center' }}>
+                  {gcalPushing
+                    ? <><span className="spinner" style={{ display:'inline-block', width:10, height:10, border:'2px solid #ffffff44', borderTop:'2px solid #fff', borderRadius:'50%' }}/> Adding to GCal...</>
+                    : '📅 Add Follow-up to Google Calendar'
+                  }
+                </button>
+              </div>
+            )}
             {/* Referred By */}
             <div style={{ marginBottom:12 }}>
               <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>REFERRED BY</div>
@@ -794,20 +881,57 @@ function Dashboard({ stats, todos, setTodos, coldLeads, followUps, setSelectedCo
 
 // ─── PAGE: FNA TRACKER ────────────────────────────────────────────────────────
 function FNATracker({ fnas, setFnas, leads, isMobile, toast, setSelectedContact }) {
-  const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm]       = useState({ contactName:'', contactId:'', date:'', time:'', location:'', status:'Scheduled', notes:'', outcome:'', followUpDate:'' });
-  const [filter, setFilter]   = useState('All');
+  const [showAdd, setShowAdd]     = useState(false);
+  const [form, setForm]           = useState({ contactName:'', contactId:'', date:'', time:'', location:'', status:'Scheduled', notes:'', outcome:'', followUpDate:'' });
+  const [filter, setFilter]       = useState('All');
+  const [gcalLoading, setGcalLoading] = useState(null); // stores fna id being synced
   const upd = (k,v) => setForm(f=>({...f,[k]:v}));
 
   const FNA_STATUSES = ['Scheduled','Completed','No Show','Rescheduled','Cancelled'];
   const FNA_COLORS   = { 'Scheduled':C.gold,'Completed':C.emerald,'No Show':C.rose,'Rescheduled':C.orange,'Cancelled':C.gray };
 
-  const save = () => {
+  const save = async (pushToGcal = false) => {
     if (!form.contactName.trim()||!form.date) return;
-    setFnas(p=>[{ ...form, id:Date.now(), createdAt:new Date().toISOString() }, ...p]);
+    const newFna = { ...form, id:Date.now(), createdAt:new Date().toISOString() };
+    setFnas(p=>[newFna, ...p]);
     setForm({ contactName:'', contactId:'', date:'', time:'', location:'', status:'Scheduled', notes:'', outcome:'', followUpDate:'' });
     setShowAdd(false);
-    toast('FNA scheduled!');
+    if (pushToGcal) {
+      setGcalLoading(newFna.id);
+      const timeStr = form.time || '10:00';
+      const start = new Date(`${form.date}T${timeStr}:00`);
+      const end   = new Date(start.getTime() + 60 * 60 * 1000);
+      const ok = await gcalCreateEvent({
+        summary: `📋 FNA – ${form.contactName}`,
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        description: form.notes ? form.notes : 'Primerica Financial Needs Analysis',
+        location: form.location || '',
+        colorId: '5',
+      });
+      setGcalLoading(null);
+      toast(ok ? '📅 Added to Google Calendar!' : 'FNA saved (GCal sync failed)', ok ? 'success' : 'error');
+    } else {
+      toast('FNA scheduled!');
+    }
+  };
+
+  const pushExistingToGcal = async (f) => {
+    if (!f.date) { toast('No date set on this FNA', 'error'); return; }
+    setGcalLoading(f.id);
+    const timeStr = f.time || '10:00';
+    const start = new Date(`${f.date}T${timeStr}:00`);
+    const end   = new Date(start.getTime() + 60 * 60 * 1000);
+    const ok = await gcalCreateEvent({
+      summary: `📋 FNA – ${f.contactName}`,
+      startTime: start.toISOString(),
+      endTime: end.toISOString(),
+      description: f.notes || 'Primerica Financial Needs Analysis',
+      location: f.location || '',
+      colorId: '5',
+    });
+    setGcalLoading(null);
+    toast(ok ? '📅 Added to Google Calendar!' : 'GCal sync failed — check connection', ok ? 'success' : 'error');
   };
 
   const filtered = fnas.filter(f=>filter==='All'||f.status===filter);
@@ -874,8 +998,9 @@ function FNATracker({ fnas, setFnas, leads, isMobile, toast, setSelectedContact 
             <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>NOTES / OUTCOME</div>
             <textarea value={form.notes} onChange={e=>upd('notes',e.target.value)} rows={2} style={{ ...inp(), resize:'vertical' }} placeholder='Pre-FNA notes or post-FNA outcome...'/>
           </div>
-          <div style={{ display:'flex', gap:8 }}>
-            <button onClick={save} style={btn(C.gGold,true)}>Save FNA</button>
+          <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+            <button onClick={()=>save(true)} style={{ ...btn(C.gBlue,true), display:'flex', alignItems:'center', gap:6 }}>📅 Save + GCal</button>
+            <button onClick={()=>save(false)} style={btn(C.gGold,true)}>Save Only</button>
             <button onClick={()=>setShowAdd(false)} style={{ background:C.border, border:'none', borderRadius:9, color:C.text, padding:'7px 15px', fontSize:12, fontWeight:700, cursor:'pointer' }}>Cancel</button>
           </div>
         </div>
@@ -912,12 +1037,16 @@ function FNATracker({ fnas, setFnas, leads, isMobile, toast, setSelectedContact 
                 </div>
               </div>
               {f.notes&&<div style={{ fontSize:12, color:C.textSub, background:C.bgAlt, borderRadius:8, padding:'8px 12px', marginBottom:8 }}>{f.notes}</div>}
-              <div style={{ display:'flex', gap:16 }}>
+              <div style={{ display:'flex', gap:10, alignItems:'center', flexWrap:'wrap' }}>
                 {f.followUpDate&&<div style={{ fontSize:11, color:C.gold }}>📅 Follow-up: {fmtFull(f.followUpDate)}</div>}
                 <select value={f.status} onChange={e=>setFnas(p=>p.map(x=>x.id===f.id?{...x,status:e.target.value}:x))}
                   style={{ background:color+'18', border:'1px solid '+color+'40', borderRadius:8, color, fontSize:11, fontWeight:700, padding:'3px 8px', cursor:'pointer' }}>
                   {FNA_STATUSES.map(s=><option key={s}>{s}</option>)}
                 </select>
+                <button onClick={()=>pushExistingToGcal(f)} disabled={gcalLoading===f.id}
+                  style={{ background:C.blue+'18', border:'1px solid '+C.blue+'40', borderRadius:8, color:gcalLoading===f.id?C.textDim:C.blue, fontSize:11, fontWeight:700, padding:'4px 10px', cursor:'pointer', display:'flex', alignItems:'center', gap:4 }}>
+                  {gcalLoading===f.id ? <span className="spinner" style={{ display:'inline-block', width:10, height:10, border:'2px solid '+C.blue+'44', borderTop:'2px solid '+C.blue, borderRadius:'50%' }}/> : '📅'} GCal
+                </button>
               </div>
             </div>
           );
@@ -929,24 +1058,49 @@ function FNATracker({ fnas, setFnas, leads, isMobile, toast, setSelectedContact 
 
 // ─── PAGE: APPOINTMENT CALENDAR ───────────────────────────────────────────────
 function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
-  const [viewMode, setViewMode] = useState('week');
+  const [viewMode, setViewMode]   = useState('week');
   const [weekOffset, setWeekOffset] = useState(0);
+  const [gcalEvents, setGcalEvents] = useState([]);
+  const [gcalLoading, setGcalLoading] = useState(false);
+  const [gcalError, setGcalError] = useState(false);
 
   const today = new Date();
   today.setHours(0,0,0,0);
+
+  const loadGcalEvents = async () => {
+    setGcalLoading(true);
+    setGcalError(false);
+    const events = await gcalListUpcoming();
+    if (events && events.length >= 0) {
+      setGcalEvents(events);
+    } else {
+      setGcalError(true);
+    }
+    setGcalLoading(false);
+  };
+
+  useEffect(() => { loadGcalEvents(); }, []);
 
   // Build events from all sources
   const allEvents = [];
 
   leads.forEach(l=>{
-    if (l.followUp) allEvents.push({ date:l.followUp, label:l.name, type:'Follow Up', color:C.gold, contact:l });
-    if (l.status==='FNA Scheduled'&&l.followUp) allEvents.push({ date:l.followUp, label:'FNA: '+l.name, type:'FNA', color:C.gold, contact:l });
+    if (l.followUp) allEvents.push({ date:l.followUp, label:l.name, type:'Follow Up', color:C.gold, contact:l, source:'crm' });
+    if (l.status==='FNA Scheduled'&&l.followUp) allEvents.push({ date:l.followUp, label:'FNA: '+l.name, type:'FNA', color:C.gold, contact:l, source:'crm' });
   });
   recruits.forEach(r=>{
-    if (r.followUp) allEvents.push({ date:r.followUp, label:r.name+' (recruit)', type:'Recruit', color:C.purple, contact:r });
+    if (r.followUp) allEvents.push({ date:r.followUp, label:r.name+' (recruit)', type:'Recruit', color:C.purple, contact:r, source:'crm' });
   });
   fnas.forEach(f=>{
-    if (f.date&&f.status!=='Cancelled') allEvents.push({ date:f.date, label:'FNA: '+f.contactName, type:'FNA', color:C.gold, time:f.time });
+    if (f.date&&f.status!=='Cancelled') allEvents.push({ date:f.date, label:'FNA: '+f.contactName, type:'FNA', color:C.gold, time:f.time, source:'crm' });
+  });
+  // Google Calendar events
+  gcalEvents.forEach(e=>{
+    if (e.start) {
+      const dateStr = e.start.split('T')[0];
+      const timeStr = e.start.includes('T') ? e.start.split('T')[1].slice(0,5) : '';
+      allEvents.push({ date:dateStr, label:e.title||'GCal Event', type:'Google Cal', color:C.teal, time:timeStr, location:e.location||'', source:'gcal' });
+    }
   });
 
   // Get week start
@@ -963,12 +1117,12 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
 
   return (
     <div className="fade-up">
-      <div style={{ ...row(), marginBottom:18, flexWrap:'wrap', gap:10 }}>
+      <div style={{ ...row(), marginBottom:14, flexWrap:'wrap', gap:10 }}>
         <div>
           <div style={{ fontSize:isMobile?18:24, fontWeight:900, color:C.text }}>Calendar</div>
-          <div style={{ fontSize:12, color:C.textDim, marginTop:3 }}>FNAs · Follow-ups · Callbacks</div>
+          <div style={{ fontSize:12, color:C.textDim, marginTop:3 }}>FNAs · Follow-ups · Callbacks · Google Cal</div>
         </div>
-        <div style={{ display:'flex', gap:6 }}>
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
           {['week','upcoming'].map(v=>(
             <button key={v} onClick={()=>setViewMode(v)} style={{
               padding:'6px 14px', borderRadius:9, fontSize:12, fontWeight:700, cursor:'pointer', border:'none',
@@ -977,7 +1131,27 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
               outline:viewMode!==v?'1px solid '+C.border:'none',
             }}>{v==='week'?'Week View':'Upcoming'}</button>
           ))}
+          <button onClick={loadGcalEvents} disabled={gcalLoading} style={{
+            padding:'6px 14px', borderRadius:9, fontSize:12, fontWeight:700, cursor:'pointer',
+            background:C.teal+'18', border:'1px solid '+C.teal+'40', color:gcalLoading?C.textDim:C.teal,
+            display:'flex', alignItems:'center', gap:5,
+          }}>
+            {gcalLoading
+              ? <><span className="spinner" style={{ display:'inline-block', width:10, height:10, border:'2px solid '+C.teal+'44', borderTop:'2px solid '+C.teal, borderRadius:'50%' }}/> Syncing...</>
+              : <>🔄 Sync GCal ({gcalEvents.length})</>
+            }
+          </button>
         </div>
+      </div>
+
+      {/* GCal legend */}
+      <div style={{ display:'flex', gap:12, flexWrap:'wrap', marginBottom:14 }}>
+        {[['CRM Events',C.gold],['Recruits',C.purple],['Google Calendar',C.teal]].map(([label,color])=>(
+          <div key={label} style={{ display:'flex', alignItems:'center', gap:5 }}>
+            <div style={{ width:8, height:8, borderRadius:'50%', background:color }}/>
+            <span style={{ fontSize:11, color:C.textDim }}>{label}</span>
+          </div>
+        ))}
       </div>
 
       {viewMode==='week'&&(
