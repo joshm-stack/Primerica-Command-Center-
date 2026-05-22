@@ -152,6 +152,9 @@ const C = {
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 const LEAD_STATUSES    = ['New','Contacted','FNA Scheduled','Presented','Follow Up','Closed Won','Closed Lost'];
+const LEAD_TEMPS       = ['Cold','Warm','Hot'];
+const AGE_GROUPS       = ['18-25','26-55','56+'];
+const TEMP_COLORS      = { 'Cold':C.sky, 'Warm':C.orange, 'Hot':C.rose };
 const RECRUIT_STATUSES = ['Prospect','Invited','Interviewed','Licensing','Licensed','Active','Dropped'];
 const SOURCES          = ['Social Media','Referral','Cold Outreach','Event','Walk-in','Other','Import'];
 const POLICY_TYPES     = ['Term Life','SMART Loan','Investments','Mutual Funds','Other'];
@@ -561,6 +564,29 @@ function ContactModal({ contact, onClose, onSave, onDelete, isRecruit, leads }) 
                 </button>
               </div>
             )}
+            {/* Temperature + Age Group */}
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+              <div>
+                <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>TEMPERATURE</div>
+                <div style={{ display:'flex', gap:6 }}>
+                  {['Cold','Warm','Hot'].map(t=>(
+                    <button key={t} onClick={()=>upd('temperature',c.temperature===t?'':t)} style={{
+                      flex:1, padding:'7px 4px', borderRadius:8, fontSize:11, fontWeight:700, cursor:'pointer', border:'none',
+                      background:c.temperature===t?(TEMP_COLORS[t]+'30'):'none',
+                      color:c.temperature===t?TEMP_COLORS[t]:C.textDim,
+                      outline:c.temperature===t?'1px solid '+TEMP_COLORS[t]+'50':'1px solid '+C.border,
+                    }}>{t==='Cold'?'🧊':t==='Warm'?'🔆':'🔥'}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>AGE GROUP</div>
+                <select value={c.ageGroup||''} onChange={e=>upd('ageGroup',e.target.value)} style={{ ...inp(), cursor:'pointer' }}>
+                  <option value=''>Not set</option>
+                  {AGE_GROUPS.map(a=><option key={a}>{a}</option>)}
+                </select>
+              </div>
+            </div>
             {/* Referred By */}
             <div style={{ marginBottom:12 }}>
               <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>REFERRED BY</div>
@@ -1142,6 +1168,28 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
 
   const TYPE_ICON = { 'FNA':'📋', 'Follow-up':'📞', 'Recruit':'🤝', 'GCal':'📅' };
 
+  // ── GCal event creation/edit form ─────────────────────────────────────────
+  const blankForm = () => ({ title:'', date:new Date().toISOString().split('T')[0], time:'10:00', endTime:'11:00', location:'', description:'' });
+  const [showEventForm, setShowEventForm] = useState(false);
+  const [eventForm,     setEventForm]     = useState(blankForm());
+  const [editingEventId, setEditingEventId] = useState(null);
+  const [gcalSaving, setGcalSaving]       = useState(false);
+  const updForm = (k,v) => setEventForm(f=>({...f,[k]:v}));
+
+  const saveGcalEvent = async () => {
+    if (!eventForm.title.trim() || !eventForm.date) return;
+    setGcalSaving(true);
+    const startISO = new Date(`${eventForm.date}T${eventForm.time}:00`).toISOString();
+    const endISO   = new Date(`${eventForm.date}T${eventForm.endTime}:00`).toISOString();
+    const ok = await gcalCreateEvent({
+      summary: eventForm.title, startTime: startISO, endTime: endISO,
+      location: eventForm.location, description: eventForm.description,
+    });
+    if (ok) { toast('📅 Event added to Google Calendar!'); loadGcalEvents(); setShowEventForm(false); setEventForm(blankForm()); }
+    else toast('Failed to save event — check connection', 'error');
+    setGcalSaving(false);
+  };
+
   return (
     <div className="fade-up">
 
@@ -1173,6 +1221,9 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
               ? <span className="spinner" style={{ display:'inline-block', width:9, height:9, border:'2px solid '+C.teal+'44', borderTop:'2px solid '+C.teal, borderRadius:'50%' }}/>
               : '🔄'} Sync
           </button>
+          <button onClick={()=>{ setEventForm(blankForm()); setShowEventForm(true); }} style={{ ...btn(C.gBlue,true), display:'flex', alignItems:'center', gap:5 }}>
+            + New Event
+          </button>
         </div>
       </div>
 
@@ -1185,6 +1236,50 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
           </div>
         ))}
       </div>
+
+      {/* ── New Event Form ── */}
+      {showEventForm&&(
+        <div style={cardS({ borderTop:'2px solid '+C.blue, marginBottom:18 })}>
+          <div style={{ ...row(), marginBottom:16 }}>
+            <div style={{ fontSize:14, fontWeight:800, color:C.blue }}>📅 New Google Calendar Event</div>
+            <button onClick={()=>setShowEventForm(false)} style={{ background:'none', border:'none', color:C.textDim, cursor:'pointer', fontSize:20 }}>×</button>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+            <div style={{ gridColumn:'1/-1' }}>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>EVENT TITLE</div>
+              <input autoFocus value={eventForm.title} onChange={e=>updForm('title',e.target.value)} placeholder='FNA with Maria, Follow-up call...' style={inp()}/>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>DATE</div>
+              <input type='date' value={eventForm.date} onChange={e=>updForm('date',e.target.value)} style={inp()}/>
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
+              <div>
+                <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>START</div>
+                <input type='time' value={eventForm.time} onChange={e=>updForm('time',e.target.value)} style={inp()}/>
+              </div>
+              <div>
+                <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>END</div>
+                <input type='time' value={eventForm.endTime} onChange={e=>updForm('endTime',e.target.value)} style={inp()}/>
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>LOCATION (optional)</div>
+              <input value={eventForm.location} onChange={e=>updForm('location',e.target.value)} placeholder='Address, Zoom, Coffee shop...' style={inp()}/>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>NOTES (optional)</div>
+              <input value={eventForm.description} onChange={e=>updForm('description',e.target.value)} placeholder='Any notes...' style={inp()}/>
+            </div>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={saveGcalEvent} disabled={gcalSaving} style={{ ...btn(C.gBlue), flex:1, display:'flex', alignItems:'center', justifyContent:'center', gap:6 }}>
+              {gcalSaving ? <><span className="spinner" style={{ display:'inline-block', width:10, height:10, border:'2px solid #ffffff44', borderTop:'2px solid #fff', borderRadius:'50%' }}/> Saving...</> : '📅 Save to Google Calendar'}
+            </button>
+            <button onClick={()=>setShowEventForm(false)} style={{ background:C.border, border:'none', borderRadius:9, color:C.text, padding:'11px 20px', fontSize:13, fontWeight:700, cursor:'pointer' }}>Cancel</button>
+          </div>
+        </div>
+      )}
 
       {/* ── MONTH VIEW ── */}
       {viewMode==='month' && (
@@ -1254,10 +1349,14 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
                 <div style={{ fontSize:14, fontWeight:800, color:C.text }}>
                   {selectedDay.toLocaleDateString('en-US',{ weekday:'long', month:'long', day:'numeric' })}
                 </div>
-                <button onClick={()=>setSelectedDay(null)} style={{ background:'none', border:'none', color:C.textDim, cursor:'pointer', fontSize:18 }}>×</button>
+                <div style={{ display:'flex', gap:6 }}>
+                  <button onClick={()=>{ setEventForm({...blankForm(), date:selectedDay.toISOString().split('T')[0]}); setShowEventForm(true); setSelectedDay(null); }}
+                    style={{ ...btn(C.gBlue,true), fontSize:11 }}>+ Event</button>
+                  <button onClick={()=>setSelectedDay(null)} style={{ background:'none', border:'none', color:C.textDim, cursor:'pointer', fontSize:20 }}>×</button>
+                </div>
               </div>
               {dayEvents.length === 0
-                ? <div style={{ fontSize:12, color:C.textDim, textAlign:'center', padding:'12px 0' }}>No events this day</div>
+                ? <div style={{ fontSize:12, color:C.textDim, textAlign:'center', padding:'12px 0' }}>No events · tap + Event to add one</div>
                 : dayEvents.map((e,i) => (
                   <div key={i} style={{ display:'flex', alignItems:'flex-start', gap:12, padding:'10px 0', borderBottom: i<dayEvents.length-1?'1px solid '+C.border:'none' }}>
                     <div style={{ width:34, height:34, borderRadius:9, background:e.color+'20', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, flexShrink:0 }}>
@@ -1408,7 +1507,7 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
 }
 
 // ─── PAGE: CONTACTS ───────────────────────────────────────────────────────────
-function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusFilter, filteredLeads, setSelectedContact, isMobile, toast }) {
+function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusFilter, filteredLeads, setSelectedContact, isMobile, toast, tempFilter, setTempFilter, ageFilter, setAgeFilter }) {
   function importVCard(e) {
     const file=e.target.files[0]; if(!file) return;
     const reader=new FileReader();
@@ -1438,11 +1537,32 @@ function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusF
           </button>
         </div>
       </div>
-      <div style={{ display:'flex', gap:10, marginBottom:16, flexWrap:'wrap' }}>
+      <div style={{ display:'flex', gap:10, marginBottom:10, flexWrap:'wrap' }}>
         <input value={search} onChange={e=>setSearch(e.target.value)} placeholder='Search name, phone, email...' style={{ ...inp(), flex:1, minWidth:180 }}/>
         <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} style={{ ...inp(), width:'auto', cursor:'pointer', minWidth:140 }}>
           <option>All</option>{LEAD_STATUSES.map(s=><option key={s}>{s}</option>)}
         </select>
+      </div>
+      <div style={{ display:'flex', gap:8, marginBottom:12, flexWrap:'wrap' }}>
+        {/* Temperature filter */}
+        {['All','Cold','Warm','Hot'].map(t=>(
+          <button key={t} onClick={()=>setTempFilter(t)} style={{
+            padding:'4px 12px', borderRadius:99, fontSize:11, fontWeight:700, cursor:'pointer', border:'none',
+            background:tempFilter===t?(TEMP_COLORS[t]||C.blue)+'25':'none',
+            color:tempFilter===t?(TEMP_COLORS[t]||C.blue):C.textDim,
+            outline:tempFilter===t?'1px solid '+(TEMP_COLORS[t]||C.blue)+'50':'1px solid '+C.border,
+          }}>{t==='All'?'🌡 All Temps':t==='Cold'?'🧊 Cold':t==='Warm'?'🔆 Warm':'🔥 Hot'}</button>
+        ))}
+        <div style={{ width:'1px', background:C.border, margin:'0 4px' }}/>
+        {/* Age group filter */}
+        {['All','18-25','26-55','56+'].map(a=>(
+          <button key={a} onClick={()=>setAgeFilter(a)} style={{
+            padding:'4px 12px', borderRadius:99, fontSize:11, fontWeight:700, cursor:'pointer', border:'none',
+            background:ageFilter===a?C.purple+'25':'none',
+            color:ageFilter===a?C.purple:C.textDim,
+            outline:ageFilter===a?'1px solid '+C.purple+'50':'1px solid '+C.border,
+          }}>{a==='All'?'👤 All Ages':a}</button>
+        ))}
       </div>
       <div style={{ fontSize:11, color:C.textDim, marginBottom:12 }}>{filteredLeads.length} {filteredLeads.length===1?'contact':'contacts'}</div>
       {filteredLeads.length===0
@@ -1457,6 +1577,8 @@ function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusF
                   <div style={{ ...row('flex-start'), gap:8, marginBottom:4, flexWrap:'wrap' }}>
                     <div style={{ fontSize:15, fontWeight:700, color:C.text }}>{l.name}</div>
                     <span style={pill(SC[l.status]||C.gray,true)}>{l.status}</span>
+                    {l.temperature&&<span style={pill(TEMP_COLORS[l.temperature]||C.gray,true)}>{l.temperature==='Cold'?'🧊':l.temperature==='Warm'?'🔆':'🔥'} {l.temperature}</span>}
+                    {l.ageGroup&&<span style={pill(C.purple,true)}>👤 {l.ageGroup}</span>}
                     {l.policyFaceAmount&&<span style={pill(C.emerald,true)}>✓ Policy</span>}
                   </div>
                   <div style={{ fontSize:12, color:C.textDim, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
@@ -1472,9 +1594,13 @@ function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusF
                   </div>
                 </div>
               </div>
-              <div style={{ display:'flex', gap:7, marginLeft:10, flexShrink:0 }}>
-                {l.phone&&<a href={'tel:'+l.phone} onClick={e=>e.stopPropagation()} style={{ ...btn(C.gEmerald,true), textDecoration:'none', padding:'8px 11px', fontSize:16 }}>📞</a>}
-                {l.phone&&<a href={'sms:'+l.phone} onClick={e=>e.stopPropagation()} style={{ ...btn(C.gSky,true), textDecoration:'none', padding:'8px 11px', fontSize:16 }}>💬</a>}
+              <div style={{ display:'flex', gap:7, marginLeft:10, flexShrink:0, flexDirection:'column', alignItems:'flex-end' }}>
+                <div style={{ display:'flex', gap:7 }}>
+                  {l.phone&&<a href={'tel:'+l.phone} onClick={e=>e.stopPropagation()} style={{ ...btn(C.gEmerald,true), textDecoration:'none', padding:'8px 11px', fontSize:16 }}>📞</a>}
+                  {l.phone&&<a href={'sms:'+l.phone} onClick={e=>e.stopPropagation()} style={{ ...btn(C.gSky,true), textDecoration:'none', padding:'8px 11px', fontSize:16 }}>💬</a>}
+                </div>
+                <button onClick={e=>{ e.stopPropagation(); if(window.confirm('Delete '+l.name+'?')) { setLeads(p=>p.filter(x=>x.id!==l.id)); toast('Contact deleted','error'); } }}
+                  style={{ background:C.rose+'15', border:'1px solid '+C.rose+'30', borderRadius:7, color:C.rose, fontSize:11, fontWeight:700, cursor:'pointer', padding:'4px 10px' }}>✕ Delete</button>
               </div>
             </div>
           </div>
@@ -1780,8 +1906,8 @@ function Team({ team, setTeam, isMobile, toast }) {
                       <div style={{ fontSize:10, color:C.textDim }}>override income</div>
                     </div>
                   )}
-                  <button onClick={()=>{ setTeam(p=>p.filter(r=>r.id!==rep.id)); toast('Rep removed','error'); }}
-                    style={{ background:'none', border:'none', color:C.textDim, fontSize:11, cursor:'pointer', padding:0 }}>Remove</button>
+                  <button onClick={()=>{ if(window.confirm('Remove '+rep.name+' from your team?')){ setTeam(p=>p.filter(r=>r.id!==rep.id)); toast('Rep removed','error'); } }}
+                    style={{ background:C.rose+'15', border:'1px solid '+C.rose+'30', borderRadius:8, color:C.rose, fontSize:12, fontWeight:700, cursor:'pointer', padding:'6px 14px', width:'100%', marginTop:4 }}>✕ Remove Rep</button>
                 </div>
               );
             })}
@@ -2206,6 +2332,8 @@ export default function App() {
 
   const [search,       setSearch]       = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
+  const [tempFilter,   setTempFilter]   = useState('All');
+  const [ageFilter,    setAgeFilter]    = useState('All');
   const [selectedContact, setSelectedContact] = useState(null);
 
   useEffect(() => {
@@ -2239,7 +2367,10 @@ export default function App() {
   const filteredLeads = leads.filter(l=>{
     const q=search.toLowerCase();
     const ok=!q||l.name?.toLowerCase().includes(q)||l.phone?.includes(q)||l.email?.toLowerCase().includes(q);
-    return ok&&(statusFilter==='All'||l.status===statusFilter);
+    const okStatus = statusFilter==='All'||l.status===statusFilter;
+    const okTemp   = tempFilter==='All'||l.temperature===tempFilter;
+    const okAge    = ageFilter==='All'||l.ageGroup===ageFilter;
+    return ok&&okStatus&&okTemp&&okAge;
   });
 
   function saveContact(c) {
@@ -2327,7 +2458,7 @@ export default function App() {
         )}
 
         {tab==='dashboard'  && <Dashboard  stats={stats} todos={todos} setTodos={setTodos} coldLeads={coldLeads} followUps={followUps} setSelectedContact={setSelectedContact} sales={sales} leads={leads} recruits={recruits} setTab={setTab} {...shared}/>}
-        {tab==='contacts'   && <Contacts   leads={leads} setLeads={setLeads} search={search} setSearch={setSearch} statusFilter={statusFilter} setStatusFilter={setStatusFilter} filteredLeads={filteredLeads} setSelectedContact={setSelectedContact} {...shared}/>}
+        {tab==='contacts'   && <Contacts   leads={leads} setLeads={setLeads} search={search} setSearch={setSearch} statusFilter={statusFilter} setStatusFilter={setStatusFilter} filteredLeads={filteredLeads} setSelectedContact={setSelectedContact} tempFilter={tempFilter} setTempFilter={setTempFilter} ageFilter={ageFilter} setAgeFilter={setAgeFilter} {...shared}/>}
         {tab==='pipeline'   && <Pipeline   leads={leads} setSelectedContact={setSelectedContact} {...shared}/>}
         {tab==='fna'        && <FNATracker fnas={fnas} setFnas={setFnas} leads={leads} setSelectedContact={setSelectedContact} {...shared}/>}
         {tab==='calendar'   && <AppointmentCalendar leads={leads} recruits={recruits} fnas={fnas} {...shared}/>}
