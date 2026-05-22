@@ -856,7 +856,7 @@ function Dashboard({ stats, todos, setTodos, coldLeads, followUps, setSelectedCo
                   <div style={{ fontSize:11, color:C.textDim }}>{daysSince(l.updatedAt)}d since contact</div>
                 </div>
               </div>
-              <span style={pill(SC[l.status]||C.gray,true)}>{l.status}</span>
+              <span style={pill(SC[l.status]||C.gray,true)}>{l.status}</span>{l.temperature&&<span style={{ ...pill(TEMP_COLORS[l.temperature]||C.gray,true), padding:'2px 6px', fontSize:12, marginLeft:4 }}>{l.temperature==='Cold'?'🧊':l.temperature==='Warm'?'🔆':'🔥'}</span>}
             </div>
           ))}
           {coldLeads.length>4&&<div style={{ fontSize:11, color:C.textDim, textAlign:'center', paddingTop:10 }}>+{coldLeads.length-4} more</div>}
@@ -1608,14 +1608,13 @@ function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusF
               <div style={{ display:'flex', alignItems:'center', gap:12, flex:1, minWidth:0 }}>
                 <Avatar name={l.name} size={42}/>
                 <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ ...row('flex-start'), gap:8, marginBottom:4, flexWrap:'wrap' }}>
+                  <div style={{ ...row('flex-start'), gap:6, marginBottom:4, flexWrap:'wrap' }}>
                     <div style={{ fontSize:15, fontWeight:700, color:C.text }}>{l.name}</div>
                     <span style={pill(SC[l.status]||C.gray,true)}>{l.status}</span>
-                    {l.temperature&&<span style={pill(TEMP_COLORS[l.temperature]||C.gray,true)}>{l.temperature==='Cold'?'🧊':l.temperature==='Warm'?'🔆':'🔥'} {l.temperature}</span>}
-                    {l.ageGroup&&<span style={pill(C.purple,true)}>👤 {l.ageGroup}</span>}
-                    {l.isClientProspect&&<span style={pill(C.blue,true)}>💼 Client</span>}
-                    {l.isRecruitProspect&&<span style={pill(C.purple,true)}>🤝 Recruit</span>}
-                    {l.policyFaceAmount&&<span style={pill(C.emerald,true)}>✓ Policy</span>}
+                    {l.temperature&&<span style={{ ...pill(TEMP_COLORS[l.temperature]||C.gray,true), padding:'2px 6px', fontSize:13 }}>{l.temperature==='Cold'?'🧊':l.temperature==='Warm'?'🔆':'🔥'}</span>}
+                    {l.isClientProspect&&<span style={{ ...pill(C.blue,true), padding:'2px 6px', fontSize:13 }}>💼</span>}
+                    {l.isRecruitProspect&&<span style={{ ...pill(C.purple,true), padding:'2px 6px', fontSize:13 }}>🤝</span>}
+                    {l.policyFaceAmount&&<span style={{ ...pill(C.emerald,true), padding:'2px 6px', fontSize:13 }}>✓</span>}
                   </div>
                   <div style={{ fontSize:12, color:C.textDim, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
                     {[l.phone,l.email].filter(Boolean).join(' · ')}
@@ -1751,11 +1750,11 @@ function Pipeline({ leads, setSelectedContact, isMobile }) {
               <div style={{ display:'flex', alignItems:'center', gap:12 }}>
                 <Avatar name={l.name} size={42}/>
                 <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ ...row('flex-start'), gap:7, marginBottom:5, flexWrap:'wrap' }}>
+                  <div style={{ ...row('flex-start'), gap:6, marginBottom:5, flexWrap:'wrap' }}>
                     <div style={{ fontSize:14, fontWeight:700, color:C.text }}>{l.name}</div>
-                    {l.temperature&&<span style={pill(TEMP_COLORS[l.temperature]||C.gray,true)}>{l.temperature==='Cold'?'🧊':l.temperature==='Warm'?'🔆':'🔥'} {l.temperature}</span>}
-                    {l.isClientProspect&&<span style={pill(C.blue,true)}>💼</span>}
-                    {l.isRecruitProspect&&<span style={pill(C.purple,true)}>🤝</span>}
+                    {l.temperature&&<span style={{ ...pill(TEMP_COLORS[l.temperature]||C.gray,true), padding:'2px 6px', fontSize:13 }}>{l.temperature==='Cold'?'🧊':l.temperature==='Warm'?'🔆':'🔥'}</span>}
+                    {l.isClientProspect&&<span style={{ ...pill(C.blue,true), padding:'2px 6px', fontSize:13 }}>💼</span>}
+                    {l.isRecruitProspect&&<span style={{ ...pill(C.purple,true), padding:'2px 6px', fontSize:13 }}>🤝</span>}
                   </div>
                   <div style={{ fontSize:12, color:C.textDim, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{l.phone}</div>
                   <div style={{ display:'flex', gap:10, marginTop:4, flexWrap:'wrap' }}>
