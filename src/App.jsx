@@ -42,8 +42,7 @@ async function gcalFetch(path, options = {}) {
       },
       body: JSON.stringify({ path, ...options }),
     });
-    if (!res.ok) return null;
-    return await res.json();
+if (!res.ok) { console.error('gcal-proxy failed:', res.status, await res.text()); return null; }    return await res.json();
   } catch { return null; }
 }
 
