@@ -1085,13 +1085,9 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
       let data;
       try { data = JSON.parse(text); } catch { setGcalError('Bad response: ' + text.slice(0,100)); setGcalLoading(false); return; }
       if (data.error) { setGcalError('GCal error: ' + data.error); setGcalStatus('error'); setGcalLoading(false); return; }
-      if (data.events) {
-        setGcalEvents(data.events.map(parseGcalEvent));
-        setGcalStatus('ok');
-      } else {
-        setGcalError('No events field. Got: ' + JSON.stringify(data).slice(0,120));
-        setGcalStatus('error');
-      }
+      const items = data.items || data.events || [];
+      setGcalEvents(items.map(parseGcalEvent));
+      setGcalStatus('ok');
     } catch(e) {
       setGcalError('Fetch failed: ' + String(e));
       setGcalStatus('error');
