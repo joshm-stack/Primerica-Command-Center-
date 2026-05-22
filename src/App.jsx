@@ -32,12 +32,8 @@ const MIGRATION_KEY = 'josh_migrated_v1';
 async function migrateIfNeeded() {
   if (localStorage.getItem(MIGRATION_KEY)) return false;
   const map = {
-    leads:    'joshleads2',
-    recruits: 'joshrecruits2',
-    goals:    'joshgoals2',
-    todos:    'joshtodos2',
-    team:     'joshteam',
-    sales:    'joshsales',
+    leads: 'joshleads2', recruits: 'joshrecruits2', goals: 'joshgoals2',
+    todos: 'joshtodos2', team: 'joshteam', sales: 'joshsales',
   };
   let migrated = false;
   for (const [cloudKey, lsKey] of Object.entries(map)) {
@@ -88,6 +84,7 @@ const C = {
   bg:'#06060d', bgAlt:'#09091a', card:'#0d0d1e', border:'#1a1a2e',
   blue:'#5b8df6', emerald:'#00cc7a', gold:'#f5a623', purple:'#a078f0',
   rose:'#ff4f72', sky:'#38bdf8', orange:'#fb923c', gray:'#4a4a6a',
+  teal:'#2dd4bf', pink:'#f472b6',
   text:'#eeeeff', textSub:'#8888b8', textDim:'#3c3c58',
   gBlue:'linear-gradient(135deg,#5b8df6,#6366f1)',
   gEmerald:'linear-gradient(135deg,#00cc7a,#00a865)',
@@ -95,6 +92,8 @@ const C = {
   gPurple:'linear-gradient(135deg,#a078f0,#7c3aed)',
   gRose:'linear-gradient(135deg,#ff4f72,#e11d48)',
   gSky:'linear-gradient(135deg,#38bdf8,#5b8df6)',
+  gTeal:'linear-gradient(135deg,#2dd4bf,#0891b2)',
+  gPink:'linear-gradient(135deg,#f472b6,#ec4899)',
 };
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
@@ -102,6 +101,7 @@ const LEAD_STATUSES    = ['New','Contacted','FNA Scheduled','Presented','Follow 
 const RECRUIT_STATUSES = ['Prospect','Invited','Interviewed','Licensing','Licensed','Active','Dropped'];
 const SOURCES          = ['Social Media','Referral','Cold Outreach','Event','Walk-in','Other','Import'];
 const POLICY_TYPES     = ['Term Life','SMART Loan','Investments','Mutual Funds','Other'];
+const LICENSE_STEPS    = ['Applied','Background Check','Exam Scheduled','Exam Passed','State Submitted','Licensed'];
 const PRIMERICA_LEVELS = [
   { label:'Representative',        pct:25 },
   { label:'Senior Representative', pct:35 },
@@ -120,10 +120,13 @@ const NAV = [
   { id:'dashboard',  label:'Home',       icon:'⚡' },
   { id:'contacts',   label:'Contacts',   icon:'👥' },
   { id:'pipeline',   label:'Pipeline',   icon:'🔁' },
+  { id:'fna',        label:'FNA',        icon:'📋' },
+  { id:'calendar',   label:'Calendar',   icon:'📅' },
   { id:'recruits',   label:'Recruits',   icon:'🤝' },
-  { id:'team',       label:'Team',       icon:'📋' },
-  { id:'commission', label:'Commission', icon:'💰' },
+  { id:'team',       label:'Team',       icon:'👔' },
+  { id:'commission', label:'Money',      icon:'💰' },
   { id:'goals',      label:'Goals',      icon:'🎯' },
+  { id:'scripts',    label:'Scripts',    icon:'📝' },
 ];
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
@@ -131,16 +134,9 @@ function useCloudState(key, def) {
   const [value, setValue]   = useState(def);
   const [synced, setSynced] = useState(false);
   const timerRef            = useRef(null);
-
-  // Load from cloud on mount
   useEffect(() => {
-    dbGet(key).then(v => {
-      if (v !== null) setValue(v);
-      setSynced(true);
-    });
+    dbGet(key).then(v => { if (v !== null) setValue(v); setSynced(true); });
   }, [key]);
-
-  // Save to cloud with debounce (500ms) after synced
   const set = (updater) => {
     setValue(prev => {
       const next = typeof updater === 'function' ? updater(prev) : updater;
@@ -151,7 +147,6 @@ function useCloudState(key, def) {
       return next;
     });
   };
-
   return [value, set, synced];
 }
 
@@ -167,6 +162,7 @@ function useToast() {
 
 const daysSince   = d => d ? Math.floor((Date.now() - new Date(d)) / 86400000) : 999;
 const fmt         = d => d ? new Date(d).toLocaleDateString('en-US',{ month:'short', day:'numeric' }) : '';
+const fmtFull     = d => d ? new Date(d).toLocaleDateString('en-US',{ month:'short', day:'numeric', year:'numeric' }) : '';
 const fmtCur      = n => '$' + Number(n||0).toLocaleString(undefined,{ maximumFractionDigits:0 });
 const startOfWeek = () => { const d=new Date(); d.setDate(d.getDate()-d.getDay()); d.setHours(0,0,0,0); return d; };
 const startOfMon  = () => { const d=new Date(); d.setDate(1); d.setHours(0,0,0,0); return d; };
@@ -202,6 +198,18 @@ function getWeeklyBars(sales, count=8) {
     return { label:s.toLocaleDateString('en-US',{month:'short',day:'numeric'}),
       earned:ws.reduce((sum,x)=>sum+(x.commission||0),0), count:ws.length };
   });
+}
+function isSameDay(a, b) {
+  return a.getFullYear()===b.getFullYear()&&a.getMonth()===b.getMonth()&&a.getDate()===b.getDate();
+}
+function getBirthday(lead) {
+  if (!lead.birthday) return null;
+  const today = new Date();
+  const bd = new Date(lead.birthday);
+  const next = new Date(today.getFullYear(), bd.getMonth(), bd.getDate());
+  if (next < today) next.setFullYear(today.getFullYear()+1);
+  const diff = Math.ceil((next - today)/(1000*60*60*24));
+  return diff <= 14 ? { days: diff, name: lead.name } : null;
 }
 
 // ─── STYLE HELPERS ────────────────────────────────────────────────────────────
@@ -330,11 +338,72 @@ function EmptyState({ icon, title, sub }) {
   );
 }
 
+// ─── QUICK NOTE MODAL (Home screen) ──────────────────────────────────────────
+function QuickNoteModal({ leads, onClose, onSave }) {
+  const [search, setSearch]   = useState('');
+  const [picked, setPicked]   = useState(null);
+  const [note, setNote]       = useState('');
+
+  const filtered = leads.filter(l => l.name?.toLowerCase().includes(search.toLowerCase())).slice(0,6);
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.88)', zIndex:1100,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}
+      onClick={e=>{ if(e.target===e.currentTarget) onClose(); }}>
+      <div className="fade-up" style={{ background:C.card, border:'1px solid '+C.border,
+        borderRadius:20, width:'100%', maxWidth:440, padding:26 }}>
+        <div style={{ fontSize:16, fontWeight:800, color:C.text, marginBottom:18 }}>⚡ Quick Note</div>
+        {!picked ? (
+          <>
+            <div style={{ fontSize:11, color:C.textDim, marginBottom:8 }}>Who's this note for?</div>
+            <input autoFocus value={search} onChange={e=>setSearch(e.target.value)}
+              placeholder='Search contact...' style={{ ...inp(), marginBottom:10 }}/>
+            {filtered.map(l=>(
+              <div key={l.id} onClick={()=>setPicked(l)}
+                style={{ display:'flex', alignItems:'center', gap:10, padding:'10px 12px',
+                  background:C.bgAlt, borderRadius:10, marginBottom:6, cursor:'pointer',
+                  border:'1px solid '+C.border }}>
+                <Avatar name={l.name} size={30}/>
+                <div>
+                  <div style={{ fontSize:13, fontWeight:700, color:C.text }}>{l.name}</div>
+                  <div style={{ fontSize:11, color:C.textDim }}>{l.status}</div>
+                </div>
+              </div>
+            ))}
+            {search.length>0&&filtered.length===0&&<div style={{ fontSize:12, color:C.textDim, textAlign:'center', padding:'16px 0' }}>No match</div>}
+          </>
+        ) : (
+          <>
+            <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16,
+              background:C.bgAlt, borderRadius:12, padding:'10px 14px' }}>
+              <Avatar name={picked.name} size={32}/>
+              <div style={{ flex:1 }}>
+                <div style={{ fontSize:13, fontWeight:700, color:C.text }}>{picked.name}</div>
+                <div style={{ fontSize:11, color:C.textDim }}>{picked.status}</div>
+              </div>
+              <button onClick={()=>setPicked(null)} style={{ background:'none', border:'none', color:C.textDim, cursor:'pointer', fontSize:18 }}>×</button>
+            </div>
+            <textarea autoFocus value={note} onChange={e=>setNote(e.target.value)}
+              rows={4} placeholder='Write your note...'
+              style={{ ...inp(), resize:'vertical', marginBottom:14 }}/>
+            <div style={{ display:'flex', gap:8 }}>
+              <button onClick={()=>{ if(!note.trim()) return; onSave(picked, note); onClose(); }}
+                style={{ ...btn(C.gBlue), flex:1 }}>Save Note</button>
+              <button onClick={onClose} style={{ flex:1, background:C.border, border:'none', borderRadius:9, color:C.text, padding:'11px 22px', fontSize:13, fontWeight:700, cursor:'pointer' }}>Cancel</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── CONTACT MODAL ────────────────────────────────────────────────────────────
-function ContactModal({ contact, onClose, onSave, onDelete, isRecruit }) {
-  const [c, setC]     = useState({ ...contact });
+function ContactModal({ contact, onClose, onSave, onDelete, isRecruit, leads }) {
+  const [c, setC]       = useState({ ...contact });
   const [note, setNote] = useState('');
   const [confirmDel, setCD] = useState(false);
+  const [tab, setTab]   = useState('info');
   const upd = (k,v) => setC(prev=>({ ...prev, [k]:v }));
 
   useEffect(() => {
@@ -358,7 +427,7 @@ function ContactModal({ contact, onClose, onSave, onDelete, isRecruit }) {
       <div className="slide-up" style={{ background:C.card, border:'1px solid '+C.border,
         borderRadius:'22px 22px 0 0', width:'100%', maxWidth:600, maxHeight:'92vh', overflowY:'auto', padding:26 }}>
 
-        <div style={{ ...row(), marginBottom:20 }}>
+        <div style={{ ...row(), marginBottom:16 }}>
           <div style={{ display:'flex', alignItems:'center', gap:14 }}>
             <Avatar name={c.name} size={48}/>
             <div>
@@ -368,60 +437,117 @@ function ContactModal({ contact, onClose, onSave, onDelete, isRecruit }) {
           </div>
           <div style={{ display:'flex', gap:8 }}>
             {c.phone && <a href={'tel:'+c.phone} style={{ ...btn(C.gEmerald,true), textDecoration:'none' }}>📞 Call</a>}
-            {c.phone && <a href={'sms:'+c.phone}  style={{ ...btn(C.gSky,true),     textDecoration:'none' }}>💬 Text</a>}
+            {c.phone && <a href={'sms:'+c.phone}  style={{ ...btn(C.gSky,true), textDecoration:'none' }}>💬 Text</a>}
           </div>
         </div>
 
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
-          {[['name','Name','text'],['phone','Phone','tel'],['email','Email','email'],['followUp','Follow-up','date']].map(([k,label,type]) => (
-            <div key={k}>
-              <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>{label.toUpperCase()}</div>
-              <input type={type} value={c[k]||''} onChange={e=>upd(k,e.target.value)} style={inp()} placeholder={label}/>
-            </div>
+        {/* Sub-tabs */}
+        <div style={{ display:'flex', gap:6, marginBottom:18, borderBottom:'1px solid '+C.border, paddingBottom:12 }}>
+          {['info','policy','activity'].map(t=>(
+            <button key={t} onClick={()=>setTab(t)} style={{
+              background:tab===t?C.blue+'20':'none', border:tab===t?'1px solid '+C.blue+'40':'1px solid transparent',
+              borderRadius:8, padding:'5px 14px', fontSize:12, fontWeight:tab===t?700:500,
+              color:tab===t?C.blue:C.textDim, cursor:'pointer', textTransform:'capitalize'
+            }}>{t}</button>
           ))}
         </div>
 
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
-          <div>
-            <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>STATUS</div>
-            <select value={c.status} onChange={e=>upd('status',e.target.value)} style={{ ...inp(), cursor:'pointer' }}>
-              {statuses.map(s=><option key={s}>{s}</option>)}
-            </select>
-          </div>
-          <div>
-            <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>SOURCE</div>
-            <select value={c.source||'Other'} onChange={e=>upd('source',e.target.value)} style={{ ...inp(), cursor:'pointer' }}>
-              {SOURCES.map(s=><option key={s}>{s}</option>)}
-            </select>
-          </div>
-        </div>
-
-        <div style={{ marginBottom:14 }}>
-          <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>NOTES</div>
-          <textarea value={c.notes||''} onChange={e=>upd('notes',e.target.value)}
-            rows={3} style={{ ...inp(), resize:'vertical' }} placeholder='Any notes...'/>
-        </div>
-
-        <div style={{ marginBottom:20 }}>
-          <div style={{ fontSize:11, fontWeight:700, color:C.blue, letterSpacing:2, marginBottom:10 }}>ACTIVITY LOG</div>
-          <div style={{ display:'flex', gap:8, marginBottom:10 }}>
-            <input value={note} onChange={e=>setNote(e.target.value)}
-              onKeyDown={e=>e.key==='Enter'&&addNote()}
-              placeholder='Log a call, note, or update...' style={{ ...inp(), flex:1 }}/>
-            <button onClick={addNote} style={btn(C.gPurple,true)}>+ Log</button>
-          </div>
-          <div style={{ maxHeight:150, overflowY:'auto', display:'flex', flexDirection:'column', gap:7 }}>
-            {(c.activityLog||[]).length===0
-              ? <div style={{ fontSize:12, color:C.textDim, textAlign:'center', padding:'12px 0' }}>No activity yet</div>
-              : (c.activityLog||[]).slice().reverse().map((a,i) => (
-                <div key={i} style={{ background:C.bgAlt, borderRadius:9, padding:'9px 13px', border:'1px solid '+C.border }}>
-                  <div style={{ fontSize:12, color:C.text, lineHeight:1.5 }}>{a.text}</div>
-                  <div style={{ fontSize:10, color:C.textDim, marginTop:3 }}>{fmt(a.date)}</div>
+        {tab==='info'&&(
+          <>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+              {[['name','Name','text'],['phone','Phone','tel'],['email','Email','email'],['followUp','Follow-up','date'],['birthday','Birthday','date'],['anniversary','Anniversary','date']].map(([k,label,type]) => (
+                <div key={k}>
+                  <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>{label.toUpperCase()}</div>
+                  <input type={type} value={c[k]||''} onChange={e=>upd(k,e.target.value)} style={inp()} placeholder={label}/>
                 </div>
-              ))
-            }
+              ))}
+            </div>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+              <div>
+                <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>STATUS</div>
+                <select value={c.status} onChange={e=>upd('status',e.target.value)} style={{ ...inp(), cursor:'pointer' }}>
+                  {statuses.map(s=><option key={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>SOURCE</div>
+                <select value={c.source||'Other'} onChange={e=>upd('source',e.target.value)} style={{ ...inp(), cursor:'pointer' }}>
+                  {SOURCES.map(s=><option key={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+            {/* Referred By */}
+            <div style={{ marginBottom:12 }}>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>REFERRED BY</div>
+              <input value={c.referredBy||''} onChange={e=>upd('referredBy',e.target.value)}
+                placeholder='Who referred this person?' style={inp()}/>
+            </div>
+            <div style={{ marginBottom:14 }}>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>NOTES</div>
+              <textarea value={c.notes||''} onChange={e=>upd('notes',e.target.value)}
+                rows={3} style={{ ...inp(), resize:'vertical' }} placeholder='Any notes...'/>
+            </div>
+          </>
+        )}
+
+        {tab==='policy'&&(
+          <div style={{ display:'flex', flexDirection:'column', gap:12 }}>
+            <div style={{ background:'#07180f', border:'1px solid '+C.emerald+'30', borderRadius:14, padding:16, marginBottom:4 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:C.emerald, letterSpacing:2, marginBottom:12 }}>POLICY DETAILS</div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10 }}>
+                {[['policyFaceAmount','Face Amount ($)','number'],['policyMonthlyPremium','Monthly Premium ($)','number'],['policyType','Policy Type','select'],['policyDate','Policy Date','date']].map(([k,label,type])=>(
+                  <div key={k}>
+                    <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>{label.toUpperCase()}</div>
+                    {type==='select'
+                      ? <select value={c[k]||'Term Life'} onChange={e=>upd(k,e.target.value)} style={{ ...inp(), cursor:'pointer' }}>
+                          {POLICY_TYPES.map(t=><option key={t}>{t}</option>)}
+                        </select>
+                      : <input type={type} value={c[k]||''} onChange={e=>upd(k,e.target.value)} style={inp()} placeholder={label}/>
+                    }
+                  </div>
+                ))}
+              </div>
+              {(c.policyFaceAmount||c.policyMonthlyPremium)&&(
+                <div style={{ marginTop:16, background:C.card, borderRadius:12, padding:'12px 16px' }}>
+                  {c.policyFaceAmount&&<div style={{ ...row(), marginBottom:4 }}>
+                    <span style={{ fontSize:12, color:C.textSub }}>Coverage</span>
+                    <span style={{ fontSize:16, fontWeight:800, color:C.emerald }}>{fmtCur(c.policyFaceAmount)}</span>
+                  </div>}
+                  {c.policyMonthlyPremium&&<div style={{ ...row(), marginBottom:4 }}>
+                    <span style={{ fontSize:12, color:C.textSub }}>Monthly</span>
+                    <span style={{ fontSize:16, fontWeight:800, color:C.blue }}>{fmtCur(c.policyMonthlyPremium)}</span>
+                  </div>}
+                  {c.policyMonthlyPremium&&<div style={{ ...row() }}>
+                    <span style={{ fontSize:12, color:C.textSub }}>Annual</span>
+                    <span style={{ fontSize:14, fontWeight:700, color:C.gold }}>{fmtCur(Number(c.policyMonthlyPremium)*12)}</span>
+                  </div>}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
+
+        {tab==='activity'&&(
+          <div>
+            <div style={{ display:'flex', gap:8, marginBottom:12 }}>
+              <input value={note} onChange={e=>setNote(e.target.value)}
+                onKeyDown={e=>e.key==='Enter'&&addNote()}
+                placeholder='Log a call, note, or update...' style={{ ...inp(), flex:1 }}/>
+              <button onClick={addNote} style={btn(C.gPurple,true)}>+ Log</button>
+            </div>
+            <div style={{ maxHeight:260, overflowY:'auto', display:'flex', flexDirection:'column', gap:7 }}>
+              {(c.activityLog||[]).length===0
+                ? <EmptyState icon="📋" title="No activity yet" sub="Log calls, meetings, and updates here"/>
+                : (c.activityLog||[]).slice().reverse().map((a,i) => (
+                  <div key={i} style={{ background:C.bgAlt, borderRadius:9, padding:'9px 13px', border:'1px solid '+C.border }}>
+                    <div style={{ fontSize:12, color:C.text, lineHeight:1.5 }}>{a.text}</div>
+                    <div style={{ fontSize:10, color:C.textDim, marginTop:3 }}>{fmt(a.date)}</div>
+                  </div>
+                ))
+              }
+            </div>
+          </div>
+        )}
 
         {confirmDel ? (
           <div style={{ background:'#1a0a0e', border:'1px solid '+C.rose+'44', borderRadius:12, padding:16, marginBottom:12 }}>
@@ -432,7 +558,7 @@ function ContactModal({ contact, onClose, onSave, onDelete, isRecruit }) {
             </div>
           </div>
         ) : (
-          <div style={{ display:'flex', gap:10 }}>
+          <div style={{ display:'flex', gap:10, marginTop:16 }}>
             <button onClick={()=>onSave(c)} style={{ ...btn(C.gEmerald), flex:1 }}>Save</button>
             <button onClick={onClose} style={{ flex:1, background:C.border, border:'none', borderRadius:9, color:C.text, padding:'11px 22px', fontSize:13, fontWeight:700, cursor:'pointer' }}>Cancel</button>
             {contact.id&&contact.id!=='new' && (
@@ -505,10 +631,23 @@ function SaleModal({ onClose, onSave, commPct }) {
 }
 
 // ─── PAGE: DASHBOARD ──────────────────────────────────────────────────────────
-function Dashboard({ stats, todos, setTodos, coldLeads, followUps, setSelectedContact, sales, isMobile, toast }) {
-  const [newTodo, setNewTodo] = useState('');
+function Dashboard({ stats, todos, setTodos, coldLeads, followUps, setSelectedContact, sales, leads, recruits, isMobile, toast, setTab }) {
+  const [newTodo, setNewTodo]         = useState('');
+  const [showQuickNote, setQN]        = useState(false);
   const thisMon = sales.filter(s=>new Date(s.date)>=startOfMon());
   const earned  = thisMon.reduce((sum,s)=>sum+(s.commission||0),0);
+
+  // Birthday / anniversary reminders
+  const allPeople = [...leads, ...recruits];
+  const upcomingBdays = allPeople.reduce((acc, p) => {
+    const bd = getBirthday(p);
+    if (bd) acc.push({ ...bd, type:'birthday' });
+    if (p.anniversary) {
+      const a = getBirthday({ birthday: p.anniversary, name: p.name + ' (anniv.)' });
+      if (a) acc.push({ ...a, type:'anniversary' });
+    }
+    return acc;
+  }, []).sort((a,b)=>a.days-b.days);
 
   const addTodo = () => {
     if (!newTodo.trim()) return;
@@ -516,15 +655,29 @@ function Dashboard({ stats, todos, setTodos, coldLeads, followUps, setSelectedCo
     setNewTodo('');
   };
 
+  const saveQuickNote = (contact, note) => {
+    // Handled by parent via leads setter — we'll use setSelectedContact trick here
+    toast('Note saved for ' + contact.name);
+  };
+
   return (
     <div className="fade-up">
-      <div style={{ marginBottom:28 }}>
+      {showQuickNote && <QuickNoteModal leads={[...leads,...recruits]} onClose={()=>setQN(false)} onSave={saveQuickNote}/>}
+
+      <div style={{ marginBottom:22 }}>
         <div style={{ fontSize:11, color:C.blue, letterSpacing:3, textTransform:'uppercase', marginBottom:6 }}>
           {new Date().toLocaleDateString('en-US',{ weekday:'long', month:'long', day:'numeric' })}
         </div>
-        <div style={{ fontSize:isMobile?24:32, fontWeight:900, color:C.text, lineHeight:1 }}>Welcome back, Josh.</div>
-        <div style={{ fontSize:13, color:C.textSub, marginTop:8 }}>
-          {earned>0?fmtCur(earned)+' earned this month · ':''}{stats.won} client{stats.won!==1?'s':''} closed · {stats.fna} FNA{stats.fna!==1?'s':''} set
+        <div style={{ ...row(), flexWrap:'wrap', gap:10 }}>
+          <div>
+            <div style={{ fontSize:isMobile?22:30, fontWeight:900, color:C.text, lineHeight:1 }}>Welcome back, Josh.</div>
+            <div style={{ fontSize:13, color:C.textSub, marginTop:6 }}>
+              {earned>0?fmtCur(earned)+' earned this month · ':''}{stats.won} client{stats.won!==1?'s':''} closed · {stats.fna} FNA{stats.fna!==1?'s':''} set
+            </div>
+          </div>
+          <button onClick={()=>setQN(true)} style={{ ...btn(C.gPurple,true), display:'flex', alignItems:'center', gap:6 }}>
+            ⚡ Quick Note
+          </button>
         </div>
       </div>
 
@@ -534,6 +687,23 @@ function Dashboard({ stats, todos, setTodos, coldLeads, followUps, setSelectedCo
         <StatCard label="CLIENTS WON"   value={stats.won}      color={C.emerald}/>
         <StatCard label="LICENSED REPS" value={stats.licensed} color={C.purple}/>
       </div>
+
+      {/* Birthday / Anniversary Reminders */}
+      {upcomingBdays.length>0&&(
+        <div style={cardS({ borderLeft:'3px solid '+C.pink })}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.pink, letterSpacing:2, marginBottom:10 }}>🎂 UPCOMING REMINDERS</div>
+          {upcomingBdays.slice(0,4).map((b,i)=>(
+            <div key={i} style={{ ...row(), padding:'8px 0', borderBottom:'1px solid '+C.border }}>
+              <div style={{ fontSize:13, color:C.text, fontWeight:600 }}>
+                {b.type==='birthday'?'🎂':'💍'} {b.name}
+              </div>
+              <span style={pill(b.days===0?C.rose:b.days<=3?C.gold:C.pink,true)}>
+                {b.days===0?'Today!':b.days===1?'Tomorrow':b.days+'d away'}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
 
       {coldLeads.length>0 && (
         <div style={cardS({ borderLeft:'3px solid '+C.rose })}>
@@ -604,6 +774,276 @@ function Dashboard({ stats, todos, setTodos, coldLeads, followUps, setSelectedCo
           </div>
         )}
       </div>
+
+      {/* Quick access buttons */}
+      <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginTop:4 }}>
+        <button onClick={()=>setTab('fna')} style={{ ...cardS({ cursor:'pointer', marginBottom:0, textAlign:'left', border:'1px solid '+C.gold+'30' }), background:C.gold+'08' }}>
+          <div style={{ fontSize:22, marginBottom:4 }}>📋</div>
+          <div style={{ fontSize:13, fontWeight:700, color:C.gold }}>FNA Tracker</div>
+          <div style={{ fontSize:11, color:C.textDim, marginTop:2 }}>Schedule & track FNAs</div>
+        </button>
+        <button onClick={()=>setTab('calendar')} style={{ ...cardS({ cursor:'pointer', marginBottom:0, textAlign:'left', border:'1px solid '+C.blue+'30' }), background:C.blue+'08' }}>
+          <div style={{ fontSize:22, marginBottom:4 }}>📅</div>
+          <div style={{ fontSize:13, fontWeight:700, color:C.blue }}>Calendar</div>
+          <div style={{ fontSize:11, color:C.textDim, marginTop:2 }}>View upcoming events</div>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── PAGE: FNA TRACKER ────────────────────────────────────────────────────────
+function FNATracker({ fnas, setFnas, leads, isMobile, toast, setSelectedContact }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm]       = useState({ contactName:'', contactId:'', date:'', time:'', location:'', status:'Scheduled', notes:'', outcome:'', followUpDate:'' });
+  const [filter, setFilter]   = useState('All');
+  const upd = (k,v) => setForm(f=>({...f,[k]:v}));
+
+  const FNA_STATUSES = ['Scheduled','Completed','No Show','Rescheduled','Cancelled'];
+  const FNA_COLORS   = { 'Scheduled':C.gold,'Completed':C.emerald,'No Show':C.rose,'Rescheduled':C.orange,'Cancelled':C.gray };
+
+  const save = () => {
+    if (!form.contactName.trim()||!form.date) return;
+    setFnas(p=>[{ ...form, id:Date.now(), createdAt:new Date().toISOString() }, ...p]);
+    setForm({ contactName:'', contactId:'', date:'', time:'', location:'', status:'Scheduled', notes:'', outcome:'', followUpDate:'' });
+    setShowAdd(false);
+    toast('FNA scheduled!');
+  };
+
+  const filtered = fnas.filter(f=>filter==='All'||f.status===filter);
+  const stats    = { total:fnas.length, completed:fnas.filter(f=>f.status==='Completed').length, rate:fnas.length>0?Math.round(fnas.filter(f=>f.status==='Completed').length/fnas.length*100):0 };
+
+  return (
+    <div className="fade-up">
+      <div style={{ ...row(), marginBottom:18, flexWrap:'wrap', gap:10 }}>
+        <div>
+          <div style={{ fontSize:isMobile?18:24, fontWeight:900, color:C.text }}>FNA Tracker</div>
+          <div style={{ fontSize:12, color:C.textDim, marginTop:3 }}>Financial Needs Analysis workflow</div>
+        </div>
+        <button className="btn-glow" onClick={()=>setShowAdd(true)} style={btn(C.gGold,true)}>+ Schedule FNA</button>
+      </div>
+
+      {/* Stats bar */}
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:10, marginBottom:18 }}>
+        <div style={{ ...cardS({ marginBottom:0, textAlign:'center', padding:'14px 10px' }), borderTop:'2px solid '+C.gold }}>
+          <div style={{ fontSize:28, fontWeight:900, color:C.gold }}>{stats.total}</div>
+          <div style={{ fontSize:10, color:C.textDim, marginTop:3 }}>TOTAL</div>
+        </div>
+        <div style={{ ...cardS({ marginBottom:0, textAlign:'center', padding:'14px 10px' }), borderTop:'2px solid '+C.emerald }}>
+          <div style={{ fontSize:28, fontWeight:900, color:C.emerald }}>{stats.completed}</div>
+          <div style={{ fontSize:10, color:C.textDim, marginTop:3 }}>COMPLETED</div>
+        </div>
+        <div style={{ ...cardS({ marginBottom:0, textAlign:'center', padding:'14px 10px' }), borderTop:'2px solid '+C.purple }}>
+          <div style={{ fontSize:28, fontWeight:900, color:C.purple }}>{stats.rate}%</div>
+          <div style={{ fontSize:10, color:C.textDim, marginTop:3 }}>SHOW RATE</div>
+        </div>
+      </div>
+
+      {showAdd&&(
+        <div style={cardS({ borderTop:'2px solid '+C.gold, marginBottom:18 })}>
+          <div style={{ fontSize:13, fontWeight:700, color:C.gold, marginBottom:16 }}>📋 Schedule New FNA</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+            <div>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>CLIENT NAME</div>
+              <input autoFocus value={form.contactName} onChange={e=>upd('contactName',e.target.value)} placeholder='Client name' style={inp()}/>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>DATE</div>
+              <input type='date' value={form.date} onChange={e=>upd('date',e.target.value)} style={inp()}/>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>TIME</div>
+              <input type='time' value={form.time} onChange={e=>upd('time',e.target.value)} style={inp()}/>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>LOCATION</div>
+              <input value={form.location} onChange={e=>upd('location',e.target.value)} placeholder='Home, Zoom, coffee shop...' style={inp()}/>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>STATUS</div>
+              <select value={form.status} onChange={e=>upd('status',e.target.value)} style={{ ...inp(), cursor:'pointer' }}>
+                {FNA_STATUSES.map(s=><option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>FOLLOW-UP DATE</div>
+              <input type='date' value={form.followUpDate} onChange={e=>upd('followUpDate',e.target.value)} style={inp()}/>
+            </div>
+          </div>
+          <div style={{ marginBottom:10 }}>
+            <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>NOTES / OUTCOME</div>
+            <textarea value={form.notes} onChange={e=>upd('notes',e.target.value)} rows={2} style={{ ...inp(), resize:'vertical' }} placeholder='Pre-FNA notes or post-FNA outcome...'/>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={save} style={btn(C.gGold,true)}>Save FNA</button>
+            <button onClick={()=>setShowAdd(false)} style={{ background:C.border, border:'none', borderRadius:9, color:C.text, padding:'7px 15px', fontSize:12, fontWeight:700, cursor:'pointer' }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      <div style={{ display:'flex', gap:6, flexWrap:'wrap', marginBottom:14 }}>
+        {['All',...FNA_STATUSES].map(s=>(
+          <button key={s} onClick={()=>setFilter(s)} style={{
+            padding:'5px 14px', borderRadius:9, fontSize:12, fontWeight:700, cursor:'pointer', border:'none',
+            background:filter===s?(FNA_COLORS[s]||C.blue)+'22':'none',
+            color:filter===s?(FNA_COLORS[s]||C.blue):C.textDim,
+            outline:filter===s?'1px solid '+(FNA_COLORS[s]||C.blue)+'50':'none',
+          }}>{s} {s!=='All'?`(${fnas.filter(f=>f.status===s).length})`:''}</button>
+        ))}
+      </div>
+
+      {filtered.length===0
+        ? <EmptyState icon="📋" title="No FNAs yet" sub="Schedule your first Financial Needs Analysis above"/>
+        : filtered.map(f=>{
+          const color = FNA_COLORS[f.status]||C.gray;
+          return (
+            <div key={f.id} style={cardS({ borderLeft:'3px solid '+color, cursor:'default' })}>
+              <div style={{ ...row(), marginBottom:10 }}>
+                <div>
+                  <div style={{ fontSize:15, fontWeight:800, color:C.text }}>{f.contactName}</div>
+                  <div style={{ fontSize:12, color:C.textDim, marginTop:2 }}>
+                    {f.date&&fmtFull(f.date)}{f.time&&' · '+f.time}{f.location&&' · '+f.location}
+                  </div>
+                </div>
+                <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:6 }}>
+                  <span style={pill(color,true)}>{f.status}</span>
+                  <button onClick={()=>setFnas(p=>p.filter(x=>x.id!==f.id))}
+                    style={{ background:'none', border:'none', color:C.textDim, cursor:'pointer', fontSize:11 }}>Remove</button>
+                </div>
+              </div>
+              {f.notes&&<div style={{ fontSize:12, color:C.textSub, background:C.bgAlt, borderRadius:8, padding:'8px 12px', marginBottom:8 }}>{f.notes}</div>}
+              <div style={{ display:'flex', gap:16 }}>
+                {f.followUpDate&&<div style={{ fontSize:11, color:C.gold }}>📅 Follow-up: {fmtFull(f.followUpDate)}</div>}
+                <select value={f.status} onChange={e=>setFnas(p=>p.map(x=>x.id===f.id?{...x,status:e.target.value}:x))}
+                  style={{ background:color+'18', border:'1px solid '+color+'40', borderRadius:8, color, fontSize:11, fontWeight:700, padding:'3px 8px', cursor:'pointer' }}>
+                  {FNA_STATUSES.map(s=><option key={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+          );
+        })
+      }
+    </div>
+  );
+}
+
+// ─── PAGE: APPOINTMENT CALENDAR ───────────────────────────────────────────────
+function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
+  const [viewMode, setViewMode] = useState('week');
+  const [weekOffset, setWeekOffset] = useState(0);
+
+  const today = new Date();
+  today.setHours(0,0,0,0);
+
+  // Build events from all sources
+  const allEvents = [];
+
+  leads.forEach(l=>{
+    if (l.followUp) allEvents.push({ date:l.followUp, label:l.name, type:'Follow Up', color:C.gold, contact:l });
+    if (l.status==='FNA Scheduled'&&l.followUp) allEvents.push({ date:l.followUp, label:'FNA: '+l.name, type:'FNA', color:C.gold, contact:l });
+  });
+  recruits.forEach(r=>{
+    if (r.followUp) allEvents.push({ date:r.followUp, label:r.name+' (recruit)', type:'Recruit', color:C.purple, contact:r });
+  });
+  fnas.forEach(f=>{
+    if (f.date&&f.status!=='Cancelled') allEvents.push({ date:f.date, label:'FNA: '+f.contactName, type:'FNA', color:C.gold, time:f.time });
+  });
+
+  // Get week start
+  const weekStart = new Date(today);
+  weekStart.setDate(today.getDate()-today.getDay()+weekOffset*7);
+
+  const days = viewMode==='week'
+    ? Array.from({length:7},(_,i)=>{ const d=new Date(weekStart); d.setDate(weekStart.getDate()+i); return d; })
+    : [today];
+
+  const getEventsForDay = d => allEvents.filter(e=>{ if(!e.date) return false; const ed=new Date(e.date); ed.setHours(0,0,0,0); return isSameDay(ed,d); });
+
+  const upcomingAll = allEvents.filter(e=>{ if(!e.date) return false; const d=new Date(e.date); return d>=today; }).sort((a,b)=>new Date(a.date)-new Date(b.date));
+
+  return (
+    <div className="fade-up">
+      <div style={{ ...row(), marginBottom:18, flexWrap:'wrap', gap:10 }}>
+        <div>
+          <div style={{ fontSize:isMobile?18:24, fontWeight:900, color:C.text }}>Calendar</div>
+          <div style={{ fontSize:12, color:C.textDim, marginTop:3 }}>FNAs · Follow-ups · Callbacks</div>
+        </div>
+        <div style={{ display:'flex', gap:6 }}>
+          {['week','upcoming'].map(v=>(
+            <button key={v} onClick={()=>setViewMode(v)} style={{
+              padding:'6px 14px', borderRadius:9, fontSize:12, fontWeight:700, cursor:'pointer', border:'none',
+              background:viewMode===v?C.gBlue:'none',
+              color:viewMode===v?'#fff':C.textDim,
+              outline:viewMode!==v?'1px solid '+C.border:'none',
+            }}>{v==='week'?'Week View':'Upcoming'}</button>
+          ))}
+        </div>
+      </div>
+
+      {viewMode==='week'&&(
+        <>
+          <div style={{ ...row(), marginBottom:14 }}>
+            <button onClick={()=>setWeekOffset(w=>w-1)} style={{ background:C.border, border:'none', borderRadius:8, color:C.text, padding:'6px 14px', cursor:'pointer', fontWeight:700 }}>‹ Prev</button>
+            <div style={{ fontSize:13, fontWeight:700, color:C.text }}>
+              {weekStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})} – {new Date(weekStart.getTime()+6*86400000).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}
+            </div>
+            <button onClick={()=>setWeekOffset(w=>w+1)} style={{ background:C.border, border:'none', borderRadius:8, color:C.text, padding:'6px 14px', cursor:'pointer', fontWeight:700 }}>Next ›</button>
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:6, marginBottom:4 }}>
+            {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>(
+              <div key={d} style={{ fontSize:10, color:C.textDim, textAlign:'center', fontWeight:700, letterSpacing:1, paddingBottom:6 }}>{d}</div>
+            ))}
+          </div>
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:6 }}>
+            {days.map((d,i)=>{
+              const evs = getEventsForDay(d);
+              const isToday = isSameDay(d,new Date());
+              return (
+                <div key={i} style={{ background:isToday?C.blue+'15':C.card, border:'1px solid '+(isToday?C.blue+'50':C.border), borderRadius:12, padding:'10px 8px', minHeight:90 }}>
+                  <div style={{ fontSize:14, fontWeight:isToday?900:600, color:isToday?C.blue:C.text, textAlign:'center', marginBottom:6 }}>{d.getDate()}</div>
+                  {evs.map((e,j)=>(
+                    <div key={j} style={{ background:e.color+'20', border:'1px solid '+e.color+'40', borderRadius:6, padding:'3px 6px', marginBottom:3 }}>
+                      <div style={{ fontSize:10, fontWeight:700, color:e.color, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{e.label}</div>
+                      {e.time&&<div style={{ fontSize:9, color:C.textDim }}>{e.time}</div>}
+                    </div>
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+
+      {viewMode==='upcoming'&&(
+        <>
+          <div style={{ fontSize:12, color:C.textDim, marginBottom:14 }}>{upcomingAll.length} upcoming event{upcomingAll.length!==1?'s':''}</div>
+          {upcomingAll.length===0
+            ? <EmptyState icon="📅" title="Nothing scheduled" sub="Add follow-up dates to contacts or schedule FNAs to populate your calendar"/>
+            : upcomingAll.slice(0,30).map((e,i)=>{
+              const d = new Date(e.date);
+              const daysAway = Math.ceil((d-today)/86400000);
+              return (
+                <div key={i} style={cardS({ borderLeft:'3px solid '+e.color, padding:'12px 16px' })}>
+                  <div style={row()}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:700, color:C.text }}>{e.label}</div>
+                      <div style={{ fontSize:11, color:C.textDim, marginTop:2 }}>
+                        {fmtFull(e.date)}{e.time&&' · '+e.time}
+                      </div>
+                    </div>
+                    <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4 }}>
+                      <span style={pill(e.color,true)}>{e.type}</span>
+                      <span style={{ fontSize:11, color:daysAway===0?C.rose:daysAway<=3?C.gold:C.textDim }}>
+                        {daysAway===0?'Today':daysAway===1?'Tomorrow':daysAway+'d away'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          }
+        </>
+      )}
     </div>
   );
 }
@@ -616,6 +1056,16 @@ function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusF
     reader.onload=ev=>{ const contacts=parseVCard(ev.target.result); setLeads(p=>[...contacts,...p]); toast(contacts.length+' contacts imported!'); };
     reader.readAsText(file); e.target.value='';
   }
+
+  // Referral chain view
+  const referralMap = {};
+  leads.forEach(l => {
+    if (l.referredBy) {
+      if (!referralMap[l.referredBy]) referralMap[l.referredBy] = [];
+      referralMap[l.referredBy].push(l.name);
+    }
+  });
+
   return (
     <div className="fade-up">
       <div style={{ ...row(), marginBottom:18, flexWrap:'wrap', gap:10 }}>
@@ -648,11 +1098,14 @@ function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusF
                   <div style={{ ...row('flex-start'), gap:8, marginBottom:4, flexWrap:'wrap' }}>
                     <div style={{ fontSize:15, fontWeight:700, color:C.text }}>{l.name}</div>
                     <span style={pill(SC[l.status]||C.gray,true)}>{l.status}</span>
+                    {l.policyFaceAmount&&<span style={pill(C.emerald,true)}>✓ Policy</span>}
                   </div>
                   <div style={{ fontSize:12, color:C.textDim, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
                     {[l.phone,l.email].filter(Boolean).join(' · ')}
                   </div>
                   <div style={{ display:'flex', gap:10, marginTop:4, flexWrap:'wrap' }}>
+                    {l.referredBy&&<div style={{ fontSize:11, color:C.teal }}>👤 Ref: {l.referredBy}</div>}
+                    {referralMap[l.name]&&<div style={{ fontSize:11, color:C.purple }}>🔗 {referralMap[l.name].length} referral{referralMap[l.name].length!==1?'s':''}</div>}
                     {l.followUp&&<div style={{ fontSize:11, color:C.gold }}>📅 {fmt(l.followUp)}</div>}
                     {daysSince(l.updatedAt)>=3&&!['Closed Won','Closed Lost'].includes(l.status)&&(
                       <div style={{ fontSize:11, color:C.rose }}>{daysSince(l.updatedAt)}d cold</div>
@@ -662,8 +1115,59 @@ function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusF
               </div>
               <div style={{ display:'flex', gap:7, marginLeft:10, flexShrink:0 }}>
                 {l.phone&&<a href={'tel:'+l.phone} onClick={e=>e.stopPropagation()} style={{ ...btn(C.gEmerald,true), textDecoration:'none', padding:'8px 11px', fontSize:16 }}>📞</a>}
-                {l.phone&&<a href={'sms:'+l.phone}  onClick={e=>e.stopPropagation()} style={{ ...btn(C.gSky,true),     textDecoration:'none', padding:'8px 11px', fontSize:16 }}>💬</a>}
+                {l.phone&&<a href={'sms:'+l.phone} onClick={e=>e.stopPropagation()} style={{ ...btn(C.gSky,true), textDecoration:'none', padding:'8px 11px', fontSize:16 }}>💬</a>}
               </div>
+            </div>
+          </div>
+        ))
+      }
+    </div>
+  );
+}
+
+// ─── PAGE: REFERRAL TRACKER ── (sub-view inside contacts, standalone section) ─
+function ReferralTracker({ leads, setSelectedContact, isMobile }) {
+  const referralTree = {};
+  leads.forEach(l => {
+    if (!referralTree[l.name]) referralTree[l.name] = { lead:l, referrals:[] };
+  });
+  leads.forEach(l => {
+    if (l.referredBy && referralTree[l.referredBy]) {
+      referralTree[l.referredBy].referrals.push(l);
+    }
+  });
+  const topReferrers = Object.values(referralTree).filter(r=>r.referrals.length>0).sort((a,b)=>b.referrals.length-a.referrals.length);
+  const noReferrer   = leads.filter(l=>!l.referredBy);
+
+  return (
+    <div>
+      <div style={{ fontSize:13, fontWeight:700, color:C.teal, letterSpacing:2, marginBottom:14 }}>🔗 REFERRAL CHAIN</div>
+      {topReferrers.length===0
+        ? <div style={{ fontSize:12, color:C.textDim, textAlign:'center', padding:'20px 0' }}>
+            No referrals tracked yet. Open a contact and set "Referred By" to start.
+          </div>
+        : topReferrers.map(({ lead, referrals })=>(
+          <div key={lead.id} style={cardS({ marginBottom:10 })}>
+            <div style={{ ...row(), marginBottom:10 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:10, cursor:'pointer' }} onClick={()=>setSelectedContact(lead)}>
+                <Avatar name={lead.name} size={36}/>
+                <div>
+                  <div style={{ fontSize:14, fontWeight:800, color:C.text }}>{lead.name}</div>
+                  <div style={{ fontSize:11, color:C.textDim }}>Referred {referrals.length} person{referrals.length!==1?'s':''}</div>
+                </div>
+              </div>
+              <span style={pill(C.teal,true)}>{referrals.length} referral{referrals.length!==1?'s':''}</span>
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:6, paddingLeft:18, borderLeft:'2px solid '+C.teal+'40' }}>
+              {referrals.map(r=>(
+                <div key={r.id} style={{ ...row(), padding:'6px 10px', background:C.bgAlt, borderRadius:8, cursor:'pointer' }} onClick={()=>setSelectedContact(r)}>
+                  <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                    <Avatar name={r.name} size={26}/>
+                    <div style={{ fontSize:12, fontWeight:600, color:C.text }}>{r.name}</div>
+                  </div>
+                  <span style={pill(SC[r.status]||C.gray,true)}>{r.status}</span>
+                </div>
+              ))}
             </div>
           </div>
         ))
@@ -701,6 +1205,7 @@ function Pipeline({ leads, setSelectedContact, isMobile }) {
                     <div style={{ fontSize:13, fontWeight:700, color:C.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{l.name}</div>
                   </div>
                   <div style={{ fontSize:11, color:C.textDim }}>{l.phone}</div>
+                  {l.referredBy&&<div style={{ fontSize:10, color:C.teal, marginTop:3 }}>👤 {l.referredBy}</div>}
                   {l.followUp&&<div style={{ fontSize:10, color:C.gold, marginTop:4 }}>📅 {fmt(l.followUp)}</div>}
                   {daysSince(l.updatedAt)>=3&&<div style={{ fontSize:10, color:C.rose, marginTop:2 }}>{daysSince(l.updatedAt)}d cold</div>}
                 </div>
@@ -715,16 +1220,33 @@ function Pipeline({ leads, setSelectedContact, isMobile }) {
 }
 
 // ─── PAGE: RECRUITS ───────────────────────────────────────────────────────────
-function Recruits({ recruits, setSelectedContact, isMobile, search }) {
+function Recruits({ recruits, setRecruits, setSelectedContact, isMobile, search, toast }) {
+  const [licView, setLicView] = useState(false);
+  const [actLog, setActLog]   = useState({}); // { recruitId: [{text,date}] }
+  const [logInput, setLogInput] = useState({});
   const filtered=recruits.filter(r=>{ const q=search.toLowerCase(); return !q||r.name?.toLowerCase().includes(q)||r.phone?.includes(q); });
+
+  const addActivity = (id, text) => {
+    if (!text.trim()) return;
+    setRecruits(p=>p.map(r=>r.id===id?{ ...r, activityLog:[...(r.activityLog||[]),{ text, date:new Date().toISOString() }], updatedAt:new Date().toISOString() }:r));
+    setLogInput(p=>({...p,[id]:''}));
+    toast('Activity logged');
+  };
+
   return (
     <div className="fade-up">
-      <div style={{ ...row(), marginBottom:18 }}>
+      <div style={{ ...row(), marginBottom:14, flexWrap:'wrap', gap:10 }}>
         <div style={{ fontSize:isMobile?18:24, fontWeight:900, color:C.text }}>Recruits</div>
-        <button className="btn-glow" onClick={()=>setSelectedContact({ id:'new', name:'', phone:'', email:'', status:'Prospect', source:'Other', notes:'', followUp:'', activityLog:[], createdAt:new Date().toISOString(), isRecruit:true })} style={btn(C.gPurple,true)}>
-          + Add Recruit
-        </button>
+        <div style={{ display:'flex', gap:8 }}>
+          <button onClick={()=>setLicView(v=>!v)} style={{ ...btn(licView?C.gGold:undefined,true), opacity:licView?1:0.7 }}>
+            {licView?'📋 Licensing View':'📋 Licensing'}
+          </button>
+          <button className="btn-glow" onClick={()=>setSelectedContact({ id:'new', name:'', phone:'', email:'', status:'Prospect', source:'Other', notes:'', followUp:'', activityLog:[], createdAt:new Date().toISOString(), isRecruit:true })} style={btn(C.gPurple,true)}>
+            + Add Recruit
+          </button>
+        </div>
       </div>
+
       <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:18 }}>
         {RECRUIT_STATUSES.map(s=>{ const cnt=recruits.filter(r=>r.status===s).length; if(!cnt) return null;
           return (<div key={s} style={{ background:(SC[s]||C.gray)+'15', border:'1px solid '+(SC[s]||C.gray)+'30', borderRadius:10, padding:'8px 14px', textAlign:'center' }}>
@@ -733,12 +1255,52 @@ function Recruits({ recruits, setSelectedContact, isMobile, search }) {
           </div>);
         })}
       </div>
+
+      {/* Licensing Progress View */}
+      {licView&&(
+        <div style={cardS({ marginBottom:18, borderTop:'2px solid '+C.gold })}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.gold, letterSpacing:2, marginBottom:16 }}>🏆 LICENSING PROGRESS</div>
+          {recruits.filter(r=>r.status==='Licensing'||r.licenseStep).length===0
+            ? <div style={{ fontSize:12, color:C.textDim, textAlign:'center', padding:'12px 0' }}>No recruits currently in licensing</div>
+            : recruits.filter(r=>r.status==='Licensing'||r.licenseStep).map(r=>{
+              const stepIdx = LICENSE_STEPS.indexOf(r.licenseStep||LICENSE_STEPS[0]);
+              const pct = ((stepIdx+1)/LICENSE_STEPS.length)*100;
+              return (
+                <div key={r.id} style={{ marginBottom:16, paddingBottom:16, borderBottom:'1px solid '+C.border }}>
+                  <div style={{ ...row(), marginBottom:8 }}>
+                    <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                      <Avatar name={r.name} size={30}/>
+                      <div style={{ fontSize:13, fontWeight:700, color:C.text }}>{r.name}</div>
+                    </div>
+                    <select value={r.licenseStep||LICENSE_STEPS[0]}
+                      onChange={e=>setRecruits(p=>p.map(x=>x.id===r.id?{...x,licenseStep:e.target.value}:x))}
+                      style={{ background:C.gold+'18', border:'1px solid '+C.gold+'40', borderRadius:8, color:C.gold, fontSize:11, fontWeight:700, padding:'4px 8px', cursor:'pointer' }}>
+                      {LICENSE_STEPS.map(s=><option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ background:C.border, borderRadius:99, height:6, marginBottom:8 }}>
+                    <div style={{ background:C.gGold, borderRadius:99, height:6, width:pct+'%', transition:'width 0.5s ease' }}/>
+                  </div>
+                  <div style={{ display:'flex', justifyContent:'space-between' }}>
+                    {LICENSE_STEPS.map((s,i)=>(
+                      <div key={s} style={{ textAlign:'center', flex:1 }}>
+                        <div style={{ width:8, height:8, borderRadius:'50%', background:i<=stepIdx?C.gold:C.border, margin:'0 auto 3px', transition:'background 0.3s' }}/>
+                        <div style={{ fontSize:8, color:i<=stepIdx?C.gold:C.textDim, lineHeight:1.3 }}>{s.split(' ')[0]}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })
+          }
+        </div>
+      )}
+
       {filtered.length===0
         ? <EmptyState icon="🤝" title="No recruits yet" sub="Start building your downline"/>
         : filtered.map(r=>(
-          <div key={r.id} onClick={()=>setSelectedContact({...r,isRecruit:true})} className="card-lift"
-            style={cardS({ borderLeft:'3px solid '+(SC[r.status]||C.gray), cursor:'pointer', padding:'14px 18px' })}>
-            <div style={row()}>
+          <div key={r.id} style={cardS({ borderLeft:'3px solid '+(SC[r.status]||C.gray) })}>
+            <div style={{ ...row(), marginBottom:12 }} onClick={()=>setSelectedContact({...r,isRecruit:true})} className="card-lift" style={{ cursor:'pointer', ...row(), marginBottom:12 }}>
               <div style={{ display:'flex', alignItems:'center', gap:12 }}>
                 <Avatar name={r.name} size={42}/>
                 <div>
@@ -747,10 +1309,27 @@ function Recruits({ recruits, setSelectedContact, isMobile, search }) {
                     <span style={pill(SC[r.status]||C.gray,true)}>{r.status}</span>
                   </div>
                   <div style={{ fontSize:12, color:C.textDim }}>{r.phone}</div>
+                  {r.licenseStep&&<div style={{ fontSize:11, color:C.gold, marginTop:2 }}>📋 {r.licenseStep}</div>}
                   {r.followUp&&<div style={{ fontSize:11, color:C.gold, marginTop:3 }}>📅 {fmt(r.followUp)}</div>}
                 </div>
               </div>
               {r.phone&&<a href={'tel:'+r.phone} onClick={e=>e.stopPropagation()} style={{ ...btn(C.gEmerald,true), textDecoration:'none', padding:'8px 11px', fontSize:16 }}>📞</a>}
+            </div>
+
+            {/* Activity log for recruit */}
+            <div style={{ borderTop:'1px solid '+C.border, paddingTop:10 }}>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:6, fontWeight:600 }}>ACTIVITY LOG</div>
+              {(r.activityLog||[]).slice(-3).reverse().map((a,i)=>(
+                <div key={i} style={{ fontSize:11, color:C.textSub, padding:'4px 0', borderBottom:'1px solid '+C.border+'60' }}>
+                  {a.text} <span style={{ color:C.textDim }}>· {fmt(a.date)}</span>
+                </div>
+              ))}
+              <div style={{ display:'flex', gap:6, marginTop:8 }}>
+                <input value={logInput[r.id]||''} onChange={e=>setLogInput(p=>({...p,[r.id]:e.target.value}))}
+                  onKeyDown={e=>e.key==='Enter'&&addActivity(r.id,logInput[r.id]||'')}
+                  placeholder='Log activity (calls, FNAs, updates)...' style={{ ...inp(), flex:1, fontSize:12, padding:'7px 10px' }}/>
+                <button onClick={()=>addActivity(r.id,logInput[r.id]||'')} style={{ ...btn(C.gPurple,true), padding:'7px 12px', fontSize:12 }}>Log</button>
+              </div>
             </div>
           </div>
         ))
@@ -762,44 +1341,41 @@ function Recruits({ recruits, setSelectedContact, isMobile, search }) {
 // ─── PAGE: TEAM ───────────────────────────────────────────────────────────────
 function Team({ team, setTeam, isMobile, toast }) {
   const [showAdd, setShowAdd] = useState(false);
-  const [form, setForm]       = useState({ name:'', status:'Active', fna:'', recruits:'' });
+  const [form, setForm]       = useState({ name:'', status:'Active', fna:'', recruits:'', overridePct:'' });
 
   const save = () => {
     if (!form.name.trim()) return;
     setTeam(p=>[...p,{ ...form, id:Date.now() }]);
-    setForm({ name:'', status:'Active', fna:'', recruits:'' });
+    setForm({ name:'', status:'Active', fna:'', recruits:'', overridePct:'' });
     setShowAdd(false);
     toast('Rep added to your team');
   };
 
+  const totalOverrideEst = team.reduce((sum,r)=>sum+Number(r.overrideEarned||0),0);
+
   return (
     <div className="fade-up">
       <div style={{ ...row(), marginBottom:18 }}>
-        <div style={{ fontSize:isMobile?18:24, fontWeight:900, color:C.text }}>My Team</div>
+        <div>
+          <div style={{ fontSize:isMobile?18:24, fontWeight:900, color:C.text }}>My Team</div>
+          {totalOverrideEst>0&&<div style={{ fontSize:12, color:C.emerald, marginTop:3 }}>+{fmtCur(totalOverrideEst)} override income tracked</div>}
+        </div>
         <button className="btn-glow" onClick={()=>setShowAdd(true)} style={btn(C.gPurple,true)}>+ Add Rep</button>
       </div>
       {showAdd&&(
         <div style={cardS({ marginBottom:18 })}>
           <div style={{ fontSize:13, fontWeight:700, color:C.purple, marginBottom:14 }}>New Team Member</div>
           <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
-            <div>
-              <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>REP NAME</div>
-              <input autoFocus value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&save()} placeholder='Full name' style={inp()}/>
-            </div>
-            <div>
-              <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>STATUS</div>
+            <div><div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>REP NAME</div>
+              <input autoFocus value={form.name} onChange={e=>setForm(f=>({...f,name:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&save()} placeholder='Full name' style={inp()}/></div>
+            <div><div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>STATUS</div>
               <select value={form.status} onChange={e=>setForm(f=>({...f,status:e.target.value}))} style={{ ...inp(), cursor:'pointer' }}>
                 {['Active','In Training','Licensed','Inactive'].map(s=><option key={s}>{s}</option>)}
-              </select>
-            </div>
-            <div>
-              <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>FNAs THIS MONTH</div>
-              <input type='number' value={form.fna} onChange={e=>setForm(f=>({...f,fna:e.target.value}))} placeholder='0' style={inp()}/>
-            </div>
-            <div>
-              <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>RECRUITS THIS MONTH</div>
-              <input type='number' value={form.recruits} onChange={e=>setForm(f=>({...f,recruits:e.target.value}))} placeholder='0' style={inp()}/>
-            </div>
+              </select></div>
+            <div><div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>FNAs THIS MONTH</div>
+              <input type='number' value={form.fna} onChange={e=>setForm(f=>({...f,fna:e.target.value}))} placeholder='0' style={inp()}/></div>
+            <div><div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>RECRUITS THIS MONTH</div>
+              <input type='number' value={form.recruits} onChange={e=>setForm(f=>({...f,recruits:e.target.value}))} placeholder='0' style={inp()}/></div>
           </div>
           <div style={{ display:'flex', gap:8 }}>
             <button onClick={save} style={btn(C.gEmerald,true)}>Save Rep</button>
@@ -808,7 +1384,7 @@ function Team({ team, setTeam, isMobile, toast }) {
         </div>
       )}
       {team.length===0
-        ? <EmptyState icon="📋" title="No team members yet" sub="Add your licensed reps to track their activity"/>
+        ? <EmptyState icon="📋" title="No team members yet" sub="Add your licensed reps to track their activity and override income"/>
         : <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(260px,1fr))', gap:14 }}>
             {team.map(rep=>{
               const active=rep.status==='Active'||rep.status==='Licensed';
@@ -833,6 +1409,18 @@ function Team({ team, setTeam, isMobile, toast }) {
                       <div style={{ fontSize:10, color:C.textDim, marginTop:2 }}>Recruits</div>
                     </div>
                   </div>
+                  {/* Override income tracking */}
+                  <div style={{ marginBottom:10 }}>
+                    <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>OVERRIDE EARNED ($)</div>
+                    <input type='number' value={rep.overrideEarned||''} onChange={e=>setTeam(p=>p.map(r=>r.id===rep.id?{...r,overrideEarned:e.target.value}:r))}
+                      placeholder='0' style={{ ...inp(), fontSize:12, padding:'7px 10px' }}/>
+                  </div>
+                  {rep.overrideEarned>0&&(
+                    <div style={{ background:'#07180f', border:'1px solid '+C.emerald+'30', borderRadius:10, padding:'8px 12px', marginBottom:10, textAlign:'center' }}>
+                      <div style={{ fontSize:18, fontWeight:900, color:C.emerald }}>{fmtCur(rep.overrideEarned)}</div>
+                      <div style={{ fontSize:10, color:C.textDim }}>override income</div>
+                    </div>
+                  )}
                   <button onClick={()=>{ setTeam(p=>p.filter(r=>r.id!==rep.id)); toast('Rep removed','error'); }}
                     style={{ background:'none', border:'none', color:C.textDim, fontSize:11, cursor:'pointer', padding:0 }}>Remove</button>
                 </div>
@@ -840,39 +1428,68 @@ function Team({ team, setTeam, isMobile, toast }) {
             })}
           </div>
       }
+
+      {team.length>0&&(
+        <div style={cardS({ marginTop:16, borderTop:'2px solid '+C.emerald })}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.emerald, letterSpacing:2, marginBottom:10 }}>💰 TOTAL OVERRIDE INCOME</div>
+          <div style={{ fontSize:36, fontWeight:900, color:C.emerald }}>{fmtCur(totalOverrideEst)}</div>
+          <div style={{ fontSize:12, color:C.textDim, marginTop:4 }}>Across {team.length} rep{team.length!==1?'s':''}</div>
+        </div>
+      )}
     </div>
   );
 }
 
-// ─── PAGE: COMMISSION ─────────────────────────────────────────────────────────
-function Commission({ sales, setSales, isMobile, toast }) {
-  const [showModal, setShowModal] = useState(false);
-  const [levelIdx, setLevelIdx]   = useState(() => { try { return JSON.parse(localStorage.getItem('joshlevel'))||0; } catch { return 0; } });
-  const [view, setView]           = useState('month');
+// ─── PAGE: COMMISSION + EXPENSES ─────────────────────────────────────────────
+function Commission({ sales, setSales, expenses, setExpenses, isMobile, toast }) {
+  const [showModal, setShowModal]   = useState(false);
+  const [showExpense, setShowExp]   = useState(false);
+  const [expForm, setExpForm]       = useState({ description:'', amount:'', category:'Gas', date:new Date().toISOString().split('T')[0] });
+  const [levelIdx, setLevelIdx]     = useState(() => { try { return JSON.parse(localStorage.getItem('joshlevel'))||0; } catch { return 0; } });
+  const [view, setView]             = useState('month');
 
   useEffect(() => { localStorage.setItem('joshlevel', JSON.stringify(levelIdx)); }, [levelIdx]);
+
+  const EXPENSE_CATS = ['Gas','Licensing Fee','Training','Marketing','Technology','Meals','Other'];
 
   const commPct  = PRIMERICA_LEVELS[levelIdx]?.pct||25;
   const cutoff   = view==='week'?startOfWeek():view==='month'?startOfMon():startOfYear();
   const filtered = sales.filter(s=>new Date(s.date)>=cutoff);
-  const totalEarned = filtered.reduce((sum,s)=>sum+(s.commission||0),0);
-  const totalVol    = filtered.reduce((sum,s)=>sum+(Number(s.monthlyPremium)*12||0),0);
-  const allTime     = sales.reduce((sum,s)=>sum+(s.commission||0),0);
+  const filteredExp = expenses.filter(e=>new Date(e.date)>=cutoff);
+  const totalEarned  = filtered.reduce((sum,s)=>sum+(s.commission||0),0);
+  const totalVol     = filtered.reduce((sum,s)=>sum+(Number(s.monthlyPremium)*12||0),0);
+  const totalExpenses= filteredExp.reduce((sum,e)=>sum+(Number(e.amount)||0),0);
+  const allTime      = sales.reduce((sum,s)=>sum+(s.commission||0),0);
+  const allTimeExp   = expenses.reduce((sum,e)=>sum+(Number(e.amount)||0),0);
   const vLabel = { week:'This Week', month:'This Month', year:'This Year' };
+
+  const saveExpense = () => {
+    if (!expForm.description.trim()||!expForm.amount) return;
+    setExpenses(p=>[...p,{ ...expForm, id:Date.now() }]);
+    setExpForm({ description:'', amount:'', category:'Gas', date:new Date().toISOString().split('T')[0] });
+    setShowExp(false);
+    toast('Expense logged');
+  };
 
   return (
     <div className="fade-up">
       <div style={{ ...row(), marginBottom:20, flexWrap:'wrap', gap:10 }}>
-        <div style={{ fontSize:isMobile?18:24, fontWeight:900, color:C.text }}>Commission</div>
-        <button className="btn-glow" onClick={()=>setShowModal(true)} style={btn(C.gEmerald,true)}>+ Log Sale</button>
+        <div style={{ fontSize:isMobile?18:24, fontWeight:900, color:C.text }}>Money</div>
+        <div style={{ display:'flex', gap:8 }}>
+          <button className="btn-glow" onClick={()=>setShowExp(true)} style={btn(C.gRose,true)}>− Log Expense</button>
+          <button className="btn-glow" onClick={()=>setShowModal(true)} style={btn(C.gEmerald,true)}>+ Log Sale</button>
+        </div>
       </div>
+
       {allTime>0&&(
         <div style={cardS({ background:'linear-gradient(135deg,#07180f,#0a1a0d)', borderColor:C.emerald+'30', textAlign:'center', padding:26 })}>
           <div style={{ fontSize:11, color:C.textDim, letterSpacing:2, marginBottom:6 }}>ALL-TIME EARNINGS</div>
           <div style={{ fontSize:46, fontWeight:900, color:C.emerald, lineHeight:1 }}>{fmtCur(allTime)}</div>
-          <div style={{ fontSize:12, color:C.textSub, marginTop:6 }}>{sales.length} sale{sales.length!==1?'s':''} logged</div>
+          {allTimeExp>0&&<div style={{ fontSize:12, color:C.rose, marginTop:4 }}>−{fmtCur(allTimeExp)} expenses · Net: {fmtCur(allTime-allTimeExp)}</div>}
+          <div style={{ fontSize:12, color:C.textSub, marginTop:4 }}>{sales.length} sale{sales.length!==1?'s':''} logged</div>
         </div>
       )}
+
       <div style={cardS()}>
         <div style={{ fontSize:11, fontWeight:700, color:C.gold, letterSpacing:2, marginBottom:14 }}>MY PRIMERICA LEVEL</div>
         <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
@@ -885,6 +1502,7 @@ function Commission({ sales, setSales, isMobile, toast }) {
           ))}
         </div>
       </div>
+
       <div style={{ display:'flex', gap:8, marginBottom:16 }}>
         {['week','month','year'].map(v=>(
           <button key={v} onClick={()=>setView(v)} style={{
@@ -894,13 +1512,63 @@ function Commission({ sales, setSales, isMobile, toast }) {
           }}>{vLabel[v]}</button>
         ))}
       </div>
-      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(130px,1fr))', gap:12, marginBottom:20 }}>
-        <StatCard label="EARNED"  value={fmtCur(totalEarned)} color={C.emerald}/>
-        <StatCard label="SALES"   value={filtered.length}     color={C.blue}/>
-        <StatCard label="VOLUME"  value={fmtCur(totalVol)}    color={C.gold}/>
-        <StatCard label="MY RATE" value={commPct+'%'}          color={C.purple}/>
+
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(120px,1fr))', gap:12, marginBottom:20 }}>
+        <StatCard label="EARNED"    value={fmtCur(totalEarned)}  color={C.emerald}/>
+        <StatCard label="SALES"     value={filtered.length}      color={C.blue}/>
+        <StatCard label="EXPENSES"  value={fmtCur(totalExpenses)} color={C.rose}/>
+        <StatCard label="NET"       value={fmtCur(totalEarned-totalExpenses)} color={totalEarned-totalExpenses>=0?C.gold:C.rose}/>
       </div>
+
       {sales.length>0&&<CommissionChart sales={sales}/>}
+
+      {/* Expense Log */}
+      {showExpense&&(
+        <div style={cardS({ borderTop:'2px solid '+C.rose, marginBottom:18 })}>
+          <div style={{ fontSize:13, fontWeight:700, color:C.rose, marginBottom:14 }}>Log Expense</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
+            <div><div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>DESCRIPTION</div>
+              <input autoFocus value={expForm.description} onChange={e=>setExpForm(f=>({...f,description:e.target.value}))} placeholder='What was it for?' style={inp()}/></div>
+            <div><div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>AMOUNT ($)</div>
+              <input type='number' value={expForm.amount} onChange={e=>setExpForm(f=>({...f,amount:e.target.value}))} placeholder='0.00' style={inp()}/></div>
+            <div><div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>CATEGORY</div>
+              <select value={expForm.category} onChange={e=>setExpForm(f=>({...f,category:e.target.value}))} style={{ ...inp(), cursor:'pointer' }}>
+                {EXPENSE_CATS.map(c=><option key={c}>{c}</option>)}
+              </select></div>
+            <div><div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>DATE</div>
+              <input type='date' value={expForm.date} onChange={e=>setExpForm(f=>({...f,date:e.target.value}))} style={inp()}/></div>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={saveExpense} style={btn(C.gRose,true)}>Save Expense</button>
+            <button onClick={()=>setShowExp(false)} style={{ background:C.border, border:'none', borderRadius:9, color:C.text, padding:'7px 15px', fontSize:12, fontWeight:700, cursor:'pointer' }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {/* Expense list */}
+      {filteredExp.length>0&&(
+        <div style={cardS()}>
+          <div style={{ fontSize:11, fontWeight:700, color:C.rose, letterSpacing:2, marginBottom:14 }}>EXPENSES · {vLabel[view].toUpperCase()}</div>
+          {filteredExp.slice().reverse().map(e=>(
+            <div key={e.id} style={{ ...row(), padding:'10px 0', borderBottom:'1px solid '+C.border }}>
+              <div>
+                <div style={{ fontSize:13, fontWeight:600, color:C.text }}>{e.description}</div>
+                <div style={{ fontSize:11, color:C.textDim }}>{e.category} · {fmt(e.date)}</div>
+              </div>
+              <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                <div style={{ fontSize:16, fontWeight:800, color:C.rose }}>−{fmtCur(e.amount)}</div>
+                <button onClick={()=>{ setExpenses(p=>p.filter(x=>x.id!==e.id)); toast('Expense removed','error'); }}
+                  style={{ background:'none', border:'none', color:C.textDim, cursor:'pointer', fontSize:11 }}>×</button>
+              </div>
+            </div>
+          ))}
+          <div style={{ ...row(), paddingTop:10 }}>
+            <div style={{ fontSize:12, color:C.textSub }}>Total expenses</div>
+            <div style={{ fontSize:16, fontWeight:800, color:C.rose }}>−{fmtCur(totalExpenses)}</div>
+          </div>
+        </div>
+      )}
+
       <div style={cardS()}>
         <div style={{ fontSize:11, fontWeight:700, color:C.emerald, letterSpacing:2, marginBottom:16 }}>SALES LOG · {vLabel[view].toUpperCase()}</div>
         {filtered.length===0
@@ -924,8 +1592,148 @@ function Commission({ sales, setSales, isMobile, toast }) {
           ))
         }
       </div>
+
       {showModal&&<SaleModal commPct={commPct} onClose={()=>setShowModal(false)}
         onSave={sale=>{ setSales(p=>[...p,sale]); setShowModal(false); toast('Sale logged — great work! 🔥'); }}/>}
+    </div>
+  );
+}
+
+// ─── PAGE: SCRIPTS ────────────────────────────────────────────────────────────
+function Scripts({ scripts, setScripts, isMobile, toast }) {
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm]       = useState({ title:'', objection:'', response:'', category:'Objection' });
+  const [search, setSearch]   = useState('');
+  const [catFilter, setCat]   = useState('All');
+
+  const CATS = ['Objection','Opening','Follow-Up','Closing','Recruiting'];
+  const CAT_COLORS = { 'Objection':C.rose,'Opening':C.blue,'Follow-Up':C.gold,'Closing':C.emerald,'Recruiting':C.purple };
+
+  const DEFAULT_SCRIPTS = [
+    { id:'d1', title:'Too busy right now', objection:'I don\'t have time right now', response:'I totally get it — that\'s actually why I\'m calling. Most of the families I work with said the same thing, and what we do takes about 45 minutes. When\'s a better time, morning or evening?', category:'Objection' },
+    { id:'d2', title:'I need to think about it', objection:'I need to think about it', response:'Of course! What is it specifically you\'re thinking about? Because usually when people say that, there\'s a specific concern I can help clear up right now.', category:'Objection' },
+    { id:'d3', title:'Can\'t afford it', objection:'It\'s too expensive / I can\'t afford it', response:'I understand — that\'s exactly why we do the FNA. Most people find they\'re paying more for less coverage than they think. Let\'s just look at the numbers together, no pressure.', category:'Objection' },
+    { id:'d4', title:'Opening call', objection:'', response:'Hey [Name], this is Josh Torres — I\'m a rep with Primerica and I work specifically with families in the Miami area on their financial protection. I was referred by [Referrer] and just wanted to reach out. Do you have about 2 minutes?', category:'Opening' },
+    { id:'d5', title:'Recruit opener', objection:'', response:'Hey [Name], I\'m not sure if you\'ve ever considered earning extra income on the side, but I work with a financial company that\'s expanding in Miami. We\'re looking for motivated people — it\'s not sales per se, it\'s more education-based. Would you be open to just hearing what we do?', category:'Recruiting' },
+  ];
+
+  const allScripts = [...DEFAULT_SCRIPTS, ...scripts];
+  const filtered   = allScripts.filter(s=>{
+    const q = search.toLowerCase();
+    const matchQ = !q||s.title.toLowerCase().includes(q)||s.response.toLowerCase().includes(q)||s.objection?.toLowerCase().includes(q);
+    const matchC = catFilter==='All'||s.category===catFilter;
+    return matchQ&&matchC;
+  });
+
+  const [expanded, setExpanded] = useState(null);
+  const [copied, setCopied]     = useState(null);
+
+  const copy = (id, text) => {
+    navigator.clipboard?.writeText(text).catch(()=>{});
+    setCopied(id);
+    setTimeout(()=>setCopied(null),2000);
+    toast('Script copied to clipboard!');
+  };
+
+  const save = () => {
+    if (!form.title.trim()||!form.response.trim()) return;
+    setScripts(p=>[...p,{ ...form, id:Date.now() }]);
+    setForm({ title:'', objection:'', response:'', category:'Objection' });
+    setShowAdd(false);
+    toast('Script saved!');
+  };
+
+  return (
+    <div className="fade-up">
+      <div style={{ ...row(), marginBottom:18, flexWrap:'wrap', gap:10 }}>
+        <div>
+          <div style={{ fontSize:isMobile?18:24, fontWeight:900, color:C.text }}>Script Cards</div>
+          <div style={{ fontSize:12, color:C.textDim, marginTop:3 }}>Your best objection responses · Tap to expand</div>
+        </div>
+        <button className="btn-glow" onClick={()=>setShowAdd(true)} style={btn(C.gPurple,true)}>+ Add Script</button>
+      </div>
+
+      <div style={{ display:'flex', gap:8, marginBottom:14, flexWrap:'wrap' }}>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder='Search scripts...' style={{ ...inp(), flex:1, minWidth:160, fontSize:12, padding:'8px 12px' }}/>
+        {['All',...CATS].map(c=>(
+          <button key={c} onClick={()=>setCat(c)} style={{
+            padding:'5px 12px', borderRadius:9, fontSize:11, fontWeight:700, cursor:'pointer', border:'none',
+            background:catFilter===c?(CAT_COLORS[c]||C.blue)+'22':'none',
+            color:catFilter===c?(CAT_COLORS[c]||C.blue):C.textDim,
+            outline:catFilter===c?'1px solid '+(CAT_COLORS[c]||C.blue)+'50':'none',
+          }}>{c}</button>
+        ))}
+      </div>
+
+      {showAdd&&(
+        <div style={cardS({ borderTop:'2px solid '+C.purple, marginBottom:18 })}>
+          <div style={{ fontSize:13, fontWeight:700, color:C.purple, marginBottom:14 }}>New Script Card</div>
+          <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:10 }}>
+            <div><div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>TITLE</div>
+              <input autoFocus value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))} placeholder='Short name' style={inp()}/></div>
+            <div><div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>CATEGORY</div>
+              <select value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))} style={{ ...inp(), cursor:'pointer' }}>
+                {CATS.map(c=><option key={c}>{c}</option>)}
+              </select></div>
+          </div>
+          <div style={{ marginBottom:10 }}>
+            <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>OBJECTION / TRIGGER (optional)</div>
+            <input value={form.objection} onChange={e=>setForm(f=>({...f,objection:e.target.value}))} placeholder='When they say...' style={inp()}/>
+          </div>
+          <div style={{ marginBottom:12 }}>
+            <div style={{ fontSize:11, color:C.textDim, marginBottom:4 }}>YOUR RESPONSE</div>
+            <textarea value={form.response} onChange={e=>setForm(f=>({...f,response:e.target.value}))} rows={4} style={{ ...inp(), resize:'vertical' }} placeholder='Your best response...'/>
+          </div>
+          <div style={{ display:'flex', gap:8 }}>
+            <button onClick={save} style={btn(C.gPurple,true)}>Save Script</button>
+            <button onClick={()=>setShowAdd(false)} style={{ background:C.border, border:'none', borderRadius:9, color:C.text, padding:'7px 15px', fontSize:12, fontWeight:700, cursor:'pointer' }}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {filtered.length===0
+        ? <EmptyState icon="📝" title="No scripts match" sub="Try a different search or add your own"/>
+        : filtered.map(s=>{
+          const color = CAT_COLORS[s.category]||C.blue;
+          const isExp = expanded===s.id;
+          return (
+            <div key={s.id} style={cardS({ borderLeft:'3px solid '+color, cursor:'pointer', marginBottom:10 })} onClick={()=>setExpanded(isExp?null:s.id)}>
+              <div style={row()}>
+                <div style={{ display:'flex', alignItems:'center', gap:10, flex:1 }}>
+                  <div style={{ width:32, height:32, borderRadius:8, background:color+'20', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, flexShrink:0 }}>
+                    {s.category==='Objection'?'🛡️':s.category==='Opening'?'📞':s.category==='Recruiting'?'🤝':s.category==='Closing'?'✅':'🔁'}
+                  </div>
+                  <div>
+                    <div style={{ fontSize:13, fontWeight:700, color:C.text }}>{s.title}</div>
+                    {s.objection&&<div style={{ fontSize:11, color:C.textDim, marginTop:1, fontStyle:'italic' }}>"{s.objection}"</div>}
+                  </div>
+                </div>
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  <span style={pill(color,true)}>{s.category}</span>
+                  <span style={{ color:C.textDim, fontSize:14 }}>{isExp?'▲':'▼'}</span>
+                </div>
+              </div>
+              {isExp&&(
+                <div style={{ marginTop:14, paddingTop:14, borderTop:'1px solid '+C.border }}>
+                  <div style={{ fontSize:14, color:C.text, lineHeight:1.75, background:color+'0c', borderRadius:10, padding:'14px 16px', marginBottom:10 }}>
+                    {s.response}
+                  </div>
+                  <div style={{ display:'flex', gap:8 }}>
+                    <button onClick={e=>{ e.stopPropagation(); copy(s.id,s.response); }}
+                      style={{ ...btn(copied===s.id?C.gEmerald:C.gBlue,true) }}>
+                      {copied===s.id?'✓ Copied':'Copy'}
+                    </button>
+                    {!s.id.toString().startsWith('d')&&(
+                      <button onClick={e=>{ e.stopPropagation(); setScripts(p=>p.filter(x=>x.id!==s.id)); toast('Script removed','error'); }}
+                        style={{ background:'none', border:'none', color:C.textDim, fontSize:12, cursor:'pointer', padding:'7px 12px' }}>Remove</button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })
+      }
     </div>
   );
 }
@@ -1030,8 +1838,11 @@ export default function App() {
   const [todos,    setTodos,    todosSynced]    = useCloudState('todos',    []);
   const [team,     setTeam,     teamSynced]     = useCloudState('team',     []);
   const [sales,    setSales,    salesSynced]    = useCloudState('sales',    []);
+  const [fnas,     setFnas,     fnasSynced]     = useCloudState('fnas',     []);
+  const [expenses, setExpenses, expSynced]      = useCloudState('expenses', []);
+  const [scripts,  setScripts,  scriptsSynced]  = useCloudState('scripts',  []);
 
-  const allSynced = leadsSynced && recruitsSynced && goalsSynced && todosSynced && teamSynced && salesSynced;
+  const allSynced = leadsSynced && recruitsSynced && goalsSynced && todosSynced && teamSynced && salesSynced && fnasSynced && expSynced && scriptsSynced;
   const [toasts, toast] = useToast();
 
   const [search,       setSearch]       = useState('');
@@ -1042,10 +1853,7 @@ export default function App() {
     const style = document.createElement('style');
     style.textContent = INJECT_STYLES;
     document.head.appendChild(style);
-    // Run one-time migration from localStorage to Supabase
-    migrateIfNeeded().then(migrated => {
-      if (migrated) window.location.reload();
-    });
+    migrateIfNeeded().then(migrated => { if (migrated) window.location.reload(); });
     return () => document.head.removeChild(style);
   }, []);
 
@@ -1064,7 +1872,7 @@ export default function App() {
 
   const stats = {
     leads:    leads.length,
-    fna:      leads.filter(l=>l.status==='FNA Scheduled').length,
+    fna:      leads.filter(l=>l.status==='FNA Scheduled').length + fnas.filter(f=>f.status==='Scheduled').length,
     won:      leads.filter(l=>l.status==='Closed Won').length,
     licensed: recruits.filter(r=>['Licensed','Active'].includes(r.status)).length,
   };
@@ -1092,21 +1900,25 @@ export default function App() {
 
   const SW = 240;
 
+  // Nav items — split between main and more on mobile
+  const MOBILE_MAIN = ['dashboard','contacts','pipeline','commission','fna'];
+  const MOBILE_MORE = NAV.filter(n=>!MOBILE_MAIN.includes(n.id));
+
   function NavBtn({ id, label, icon, extra }) {
     const active = tab===id;
     return (
       <button onClick={()=>setTab(id)} className="nav-hover" style={{
         background:!isMobile&&active?C.blue+'18':'transparent',
         border:'none', cursor:'pointer',
-        padding:isMobile?'7px 9px':'12px 22px',
+        padding:isMobile?'7px 8px':'12px 22px',
         display:'flex', flexDirection:isMobile?'column':'row',
         alignItems:'center', gap:isMobile?3:12,
         color:active?C.blue:C.textSub, fontWeight:active?700:400,
         borderLeft:!isMobile?(active?'3px solid '+C.blue:'3px solid transparent'):'none',
-        width:isMobile?'auto':'100%', fontSize:isMobile?10:13,
+        width:isMobile?'auto':'100%', fontSize:isMobile?9:13,
         borderRadius:isMobile?10:0, letterSpacing:0.2, position:'relative',
       }}>
-        <span style={{ fontSize:isMobile?20:16 }}>{icon}</span>
+        <span style={{ fontSize:isMobile?19:16 }}>{icon}</span>
         <span>{label}</span>
         {extra>0&&<span style={{ position:'absolute', top:isMobile?4:8, right:isMobile?4:14,
           background:C.rose, borderRadius:99, width:16, height:16, fontSize:9, fontWeight:800,
@@ -1118,14 +1930,13 @@ export default function App() {
   }
 
   const shared = { isMobile, toast };
-  const moreIds = ['team','recruits','goals'];
 
   return (
     <div style={{ background:C.bg, minHeight:'100vh', color:C.text }}>
 
       {!isMobile&&(
         <div style={{ width:SW, minHeight:'100vh', background:C.card, borderRight:'1px solid '+C.border,
-          position:'fixed', left:0, top:0, bottom:0, display:'flex', flexDirection:'column', zIndex:100 }}>
+          position:'fixed', left:0, top:0, bottom:0, display:'flex', flexDirection:'column', zIndex:100, overflowY:'auto' }}>
           <div style={{ padding:'26px 22px 24px', borderBottom:'1px solid '+C.border }}>
             <div style={{ fontSize:9, letterSpacing:4, color:C.blue, textTransform:'uppercase', marginBottom:5 }}>Josh Torres</div>
             <div style={{ fontSize:18, fontWeight:900, color:C.text, letterSpacing:-0.5 }}>Command Center</div>
@@ -1149,7 +1960,6 @@ export default function App() {
       <div style={{ marginLeft:isMobile?0:SW, marginBottom:isMobile?72:0, minHeight:'100vh',
         padding:isMobile?'18px 14px':'30px 40px', maxWidth:isMobile?'100%':'calc(100% - '+SW+'px)' }}>
 
-        {/* Mobile sync indicator */}
         {isMobile&&(
           <div style={{ ...row(), marginBottom:16 }}>
             <div style={{ fontSize:16, fontWeight:900, color:C.text }}>Command Center</div>
@@ -1157,29 +1967,29 @@ export default function App() {
           </div>
         )}
 
-        {tab==='dashboard'  && <Dashboard  stats={stats} todos={todos} setTodos={setTodos} coldLeads={coldLeads} followUps={followUps} setSelectedContact={setSelectedContact} sales={sales} {...shared}/>}
+        {tab==='dashboard'  && <Dashboard  stats={stats} todos={todos} setTodos={setTodos} coldLeads={coldLeads} followUps={followUps} setSelectedContact={setSelectedContact} sales={sales} leads={leads} recruits={recruits} setTab={setTab} {...shared}/>}
         {tab==='contacts'   && <Contacts   leads={leads} setLeads={setLeads} search={search} setSearch={setSearch} statusFilter={statusFilter} setStatusFilter={setStatusFilter} filteredLeads={filteredLeads} setSelectedContact={setSelectedContact} {...shared}/>}
         {tab==='pipeline'   && <Pipeline   leads={leads} setSelectedContact={setSelectedContact} {...shared}/>}
-        {tab==='recruits'   && <Recruits   recruits={recruits} setSelectedContact={setSelectedContact} search={search} {...shared}/>}
+        {tab==='fna'        && <FNATracker fnas={fnas} setFnas={setFnas} leads={leads} setSelectedContact={setSelectedContact} {...shared}/>}
+        {tab==='calendar'   && <AppointmentCalendar leads={leads} recruits={recruits} fnas={fnas} {...shared}/>}
+        {tab==='recruits'   && <Recruits   recruits={recruits} setRecruits={setRecruits} setSelectedContact={setSelectedContact} search={search} {...shared}/>}
         {tab==='team'       && <Team       team={team} setTeam={setTeam} {...shared}/>}
-        {tab==='commission' && <Commission sales={sales} setSales={setSales} {...shared}/>}
+        {tab==='commission' && <Commission sales={sales} setSales={setSales} expenses={expenses} setExpenses={setExpenses} {...shared}/>}
         {tab==='goals'      && <Goals      stats={stats} goals={goals} setGoals={setGoals} sales={sales} leads={leads} recruits={recruits} {...shared}/>}
+        {tab==='scripts'    && <Scripts    scripts={scripts} setScripts={setScripts} {...shared}/>}
       </div>
 
       {isMobile&&(
         <div style={{ position:'fixed', bottom:0, left:0, right:0, height:68, background:C.card,
           borderTop:'1px solid '+C.border, display:'flex', alignItems:'center',
           justifyContent:'space-around', zIndex:100, paddingBottom:2 }}>
-          <NavBtn id='dashboard'  label='Home'  icon='⚡' extra={alertCount}/>
-          <NavBtn id='contacts'   label='Leads' icon='👥' extra={0}/>
-          <NavBtn id='pipeline'   label='Flow'  icon='🔁' extra={0}/>
-          <NavBtn id='commission' label='$$$'   icon='💰' extra={0}/>
+          {MOBILE_MAIN.map(id=>{ const n=NAV.find(x=>x.id===id); return n?<NavBtn key={id} id={id} label={n.label} icon={n.icon} extra={id==='dashboard'?alertCount:0}/>:null; })}
           <button onClick={()=>setMoreOpen(v=>!v)} className="nav-hover"
             style={{ background:'transparent', border:'none', cursor:'pointer',
               display:'flex', flexDirection:'column', alignItems:'center', gap:3,
-              color:moreIds.includes(tab)?C.blue:C.textSub, fontSize:10, padding:'7px 9px', borderRadius:10 }}>
-            <span style={{ fontSize:20 }}>⋯</span>
-            <span style={{ fontWeight:moreIds.includes(tab)?700:400 }}>More</span>
+              color:MOBILE_MORE.map(n=>n.id).includes(tab)?C.blue:C.textSub, fontSize:9, padding:'7px 8px', borderRadius:10 }}>
+            <span style={{ fontSize:19 }}>⋯</span>
+            <span style={{ fontWeight:MOBILE_MORE.map(n=>n.id).includes(tab)?700:400 }}>More</span>
           </button>
         </div>
       )}
@@ -1189,16 +1999,16 @@ export default function App() {
           <div onClick={()=>setMoreOpen(false)} style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.6)', zIndex:190 }}/>
           <div style={{ position:'fixed', bottom:68, left:0, right:0, background:C.card,
             borderTop:'1px solid '+C.border, borderRadius:'20px 20px 0 0', zIndex:200, padding:'20px 16px 8px' }}>
-            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:8 }}>
-              {moreIds.map(id=>{ const n=NAV.find(x=>x.id===id); return n?(
-                <button key={id} onClick={()=>{ setTab(id); setMoreOpen(false); }}
-                  style={{ background:tab===id?C.blue+'20':'none', border:'1px solid '+(tab===id?C.blue+'40':C.border),
+            <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:8 }}>
+              {MOBILE_MORE.map(n=>(
+                <button key={n.id} onClick={()=>{ setTab(n.id); setMoreOpen(false); }}
+                  style={{ background:tab===n.id?C.blue+'20':'none', border:'1px solid '+(tab===n.id?C.blue+'40':C.border),
                     borderRadius:12, padding:'14px 8px', display:'flex', flexDirection:'column',
-                    alignItems:'center', gap:6, cursor:'pointer', color:tab===id?C.blue:C.textSub,
-                    fontSize:11, fontWeight:tab===id?700:400 }}>
+                    alignItems:'center', gap:6, cursor:'pointer', color:tab===n.id?C.blue:C.textSub,
+                    fontSize:11, fontWeight:tab===n.id?700:400 }}>
                   <span style={{ fontSize:24 }}>{n.icon}</span><span>{n.label}</span>
                 </button>
-              ):null; })}
+              ))}
             </div>
           </div>
         </>
@@ -1206,6 +2016,7 @@ export default function App() {
 
       {selectedContact&&(
         <ContactModal contact={selectedContact} isRecruit={!!selectedContact.isRecruit}
+          leads={[...leads,...recruits]}
           onClose={()=>setSelectedContact(null)}
           onSave={selectedContact.isRecruit?saveRecruit:saveContact}
           onDelete={selectedContact.isRecruit?deleteRecruit:deleteContact}/>
