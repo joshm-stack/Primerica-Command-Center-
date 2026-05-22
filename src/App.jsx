@@ -42,7 +42,8 @@ async function gcalFetch(path, options = {}) {
       },
       body: JSON.stringify({ path, ...options }),
     });
-if (!res.ok) { console.error('gcal-proxy failed:', res.status, await res.text()); return null; }    return await res.json();
+    if (!res.ok) return null;
+    return await res.json();
   } catch { return null; }
 }
 
@@ -1061,6 +1062,7 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
   const [gcalEvents, setGcalEvents]   = useState([]);
   const [gcalLoading, setGcalLoading] = useState(false);
   const [gcalStatus, setGcalStatus]   = useState('idle'); // idle | ok | error
+  const [gcalError,  setGcalError]    = useState('');
   const [selectedDay, setSelectedDay] = useState(null);
 
   const today = new Date();
@@ -1069,11 +1071,29 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
   const loadGcalEvents = async () => {
     setGcalLoading(true);
     setGcalStatus('idle');
-    const events = await gcalListUpcoming(3);
-    if (Array.isArray(events)) {
-      setGcalEvents(events);
-      setGcalStatus('ok');
-    } else {
+    setGcalError('');
+    try {
+      const res = await fetch(`${SB_URL}/functions/v1/gcal-proxy`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`,
+        },
+        body: JSON.stringify({ path: '/events' }),
+      });
+      const text = await res.text();
+      let data;
+      try { data = JSON.parse(text); } catch { setGcalError('Bad response: ' + text.slice(0,100)); setGcalLoading(false); return; }
+      if (data.error) { setGcalError('GCal error: ' + data.error); setGcalStatus('error'); setGcalLoading(false); return; }
+      if (data.events) {
+        setGcalEvents(data.events.map(parseGcalEvent));
+        setGcalStatus('ok');
+      } else {
+        setGcalError('No events field. Got: ' + JSON.stringify(data).slice(0,120));
+        setGcalStatus('error');
+      }
+    } catch(e) {
+      setGcalError('Fetch failed: ' + String(e));
       setGcalStatus('error');
     }
     setGcalLoading(false);
@@ -1135,8 +1155,8 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
           <div style={{ fontSize:isMobile?20:26, fontWeight:900, color:C.text, letterSpacing:-0.5 }}>Calendar</div>
           <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:4 }}>
             {gcalStatus==='ok' && <><span className="live-dot" style={{ width:6, height:6, borderRadius:'50%', background:C.teal, display:'inline-block' }}/><span style={{ fontSize:11, color:C.teal, fontWeight:600 }}>Google Cal synced · {gcalEvents.length} events</span></>}
-            {gcalStatus==='error' && <span style={{ fontSize:11, color:C.rose }}>⚠ GCal needs setup · see instructions</span>}
-            {gcalStatus==='idle' && gcalLoading && <span style={{ fontSize:11, color:C.textDim }}>Loading...</span>}
+            {gcalStatus==='error' && <span style={{ fontSize:11, color:C.rose }}>⚠ {gcalError||'GCal sync failed'}</span>}
+            {gcalStatus==='idle' && gcalLoading && <span style={{ fontSize:11, color:C.textDim }}>Syncing...</span>}
           </div>
         </div>
         <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
