@@ -151,7 +151,7 @@ const C = {
 };
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
-const LEAD_STATUSES    = ['New','Contacted','FNA Scheduled','Presented','Follow Up','Closed Won','Closed Lost'];
+const LEAD_STATUSES    = ['Untouched','Reached Out','Carryback Set','Carryback Complete','In Play','Client','Not Interested'];
 const LEAD_TEMPS       = ['Cold','Warm','Hot'];
 const AGE_GROUPS       = ['18-25','26-55','56+'];
 const TEMP_COLORS      = { 'Cold':C.sky, 'Warm':C.orange, 'Hot':C.rose };
@@ -168,8 +168,8 @@ const PRIMERICA_LEVELS = [
   { label:'RVP',                   pct:95 },
 ];
 const SC = {
-  'New':'#38bdf8','Contacted':'#818cf8','FNA Scheduled':'#f5a623',
-  'Presented':'#5b8df6','Follow Up':'#fb923c','Closed Won':'#00cc7a','Closed Lost':'#4a4a6a',
+  'Untouched':'#38bdf8','Reached Out':'#818cf8','Carryback Set':'#f5a623',
+  'Carryback Complete':'#5b8df6','In Play':'#fb923c','Client':'#00cc7a','Not Interested':'#4a4a6a',
   'Prospect':'#38bdf8','Invited':'#818cf8','Interviewed':'#f5a623',
   'Licensing':'#fb923c','Licensed':'#5b8df6','Active':'#00cc7a','Dropped':'#4a4a6a',
 };
@@ -177,7 +177,6 @@ const NAV = [
   { id:'dashboard',  label:'Home',       icon:'⚡' },
   { id:'contacts',   label:'Contacts',   icon:'👥' },
   { id:'pipeline',   label:'Pipeline',   icon:'🔁' },
-  { id:'fna',        label:'FNA',        icon:'📋' },
   { id:'calendar',   label:'Calendar',   icon:'📅' },
   { id:'recruits',   label:'Recruits',   icon:'🤝' },
   { id:'team',       label:'Team',       icon:'👔' },
@@ -575,6 +574,20 @@ function ContactModal({ contact, onClose, onSave, onDelete, isRecruit, leads }) 
                 </button>
               </div>
             )}
+            {/* Prospect Type */}
+            <div style={{ marginBottom:12 }}>
+              <div style={{ fontSize:11, color:C.textDim, marginBottom:6, letterSpacing:0.5 }}>PROSPECT TYPE (select all that apply)</div>
+              <div style={{ display:'flex', gap:8 }}>
+                {[['isClientProspect','💼 Client','gBlue'],['isRecruitProspect','🤝 Recruit','gPurple']].map(([k,label,g])=>(
+                  <button key={k} onClick={()=>upd(k,!c[k])} style={{
+                    flex:1, padding:'8px 10px', borderRadius:9, fontSize:12, fontWeight:700, cursor:'pointer', border:'none',
+                    background:c[k]?C[g]:C.border+'80',
+                    color:c[k]?'#fff':C.textDim,
+                    outline:c[k]?'none':'1px solid '+C.border,
+                  }}>{label}</button>
+                ))}
+              </div>
+            </div>
             {/* Temperature + Age Group */}
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
               <div>
@@ -1518,7 +1531,7 @@ function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
 }
 
 // ─── PAGE: CONTACTS ───────────────────────────────────────────────────────────
-function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusFilter, filteredLeads, setSelectedContact, isMobile, toast, tempFilter, setTempFilter, ageFilter, setAgeFilter }) {
+function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusFilter, filteredLeads, setSelectedContact, isMobile, toast, tempFilter, setTempFilter, ageFilter, setAgeFilter, prospectFilter, setProspectFilter }) {
   function importVCard(e) {
     const file=e.target.files[0]; if(!file) return;
     const reader=new FileReader();
@@ -1543,7 +1556,7 @@ function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusF
           <label className="btn-glow" style={{ ...btn(C.gPurple,true), cursor:'pointer' }}>
             Import .vcf<input type='file' accept='.vcf' onChange={importVCard} style={{ display:'none' }}/>
           </label>
-          <button className="btn-glow" onClick={()=>setSelectedContact({ id:'new', name:'', phone:'', email:'', status:'New', source:'Other', notes:'', followUp:'', activityLog:[], createdAt:new Date().toISOString() })} style={btn(C.gBlue,true)}>
+          <button className="btn-glow" onClick={()=>setSelectedContact({ id:'new', name:'', phone:'', email:'', status:'Untouched', source:'Other', notes:'', followUp:'', activityLog:[], createdAt:new Date().toISOString() })} style={btn(C.gBlue,true)}>
             + New Contact
           </button>
         </div>
@@ -1565,7 +1578,17 @@ function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusF
           }}>{t==='All'?'🌡 All Temps':t==='Cold'?'🧊 Cold':t==='Warm'?'🔆 Warm':'🔥 Hot'}</button>
         ))}
         <div style={{ width:'1px', background:C.border, margin:'0 4px' }}/>
-        {/* Age group filter */}
+        {/* Prospect type filter */}
+        {[['All','👥 All'],['isClientProspect','💼 Client'],['isRecruitProspect','🤝 Recruit']].map(([k,label])=>(
+          <button key={k} onClick={()=>setProspectFilter(k)} style={{
+            padding:'4px 12px', borderRadius:99, fontSize:11, fontWeight:700, cursor:'pointer', border:'none',
+            background:prospectFilter===k?(k==='isRecruitProspect'?C.purple:C.blue)+'25':'none',
+            color:prospectFilter===k?(k==='isRecruitProspect'?C.purple:C.blue):C.textDim,
+            outline:prospectFilter===k?'1px solid '+(k==='isRecruitProspect'?C.purple:C.blue)+'50':'1px solid '+C.border,
+          }}>{label}</button>
+        ))}
+        <div style={{ width:'1px', background:C.border, margin:'0 4px' }}/>
+        {/* Age group filter */}}
         {['All','18-25','26-55','56+'].map(a=>(
           <button key={a} onClick={()=>setAgeFilter(a)} style={{
             padding:'4px 12px', borderRadius:99, fontSize:11, fontWeight:700, cursor:'pointer', border:'none',
@@ -1590,6 +1613,8 @@ function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusF
                     <span style={pill(SC[l.status]||C.gray,true)}>{l.status}</span>
                     {l.temperature&&<span style={pill(TEMP_COLORS[l.temperature]||C.gray,true)}>{l.temperature==='Cold'?'🧊':l.temperature==='Warm'?'🔆':'🔥'} {l.temperature}</span>}
                     {l.ageGroup&&<span style={pill(C.purple,true)}>👤 {l.ageGroup}</span>}
+                    {l.isClientProspect&&<span style={pill(C.blue,true)}>💼 Client</span>}
+                    {l.isRecruitProspect&&<span style={pill(C.purple,true)}>🤝 Recruit</span>}
                     {l.policyFaceAmount&&<span style={pill(C.emerald,true)}>✓ Policy</span>}
                   </div>
                   <div style={{ fontSize:12, color:C.textDim, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
@@ -1599,7 +1624,7 @@ function Contacts({ leads, setLeads, search, setSearch, statusFilter, setStatusF
                     {l.referredBy&&<div style={{ fontSize:11, color:C.teal }}>👤 Ref: {l.referredBy}</div>}
                     {referralMap[l.name]&&<div style={{ fontSize:11, color:C.purple }}>🔗 {referralMap[l.name].length} referral{referralMap[l.name].length!==1?'s':''}</div>}
                     {l.followUp&&<div style={{ fontSize:11, color:C.gold }}>📅 {fmt(l.followUp)}</div>}
-                    {daysSince(l.updatedAt)>=3&&!['Closed Won','Closed Lost'].includes(l.status)&&(
+                    {daysSince(l.updatedAt)>=3&&!['Client','Not Interested'].includes(l.status)&&(
                       <div style={{ fontSize:11, color:C.rose }}>{daysSince(l.updatedAt)}d cold</div>
                     )}
                   </div>
@@ -1674,42 +1699,94 @@ function ReferralTracker({ leads, setSelectedContact, isMobile }) {
 
 // ─── PAGE: PIPELINE ───────────────────────────────────────────────────────────
 function Pipeline({ leads, setSelectedContact, isMobile }) {
-  const stages=LEAD_STATUSES.slice(0,-1);
-  const active=leads.filter(l=>!['Closed Won','Closed Lost'].includes(l.status)).length;
+  const ACTIVE_STAGES = ['Untouched','Reached Out','Carryback Set','Carryback Complete','In Play'];
+  const [stageIdx, setStageIdx] = useState(0);
+
+  const stage   = ACTIVE_STAGES[stageIdx];
+  const color   = SC[stage]||C.gray;
+  const cards   = leads.filter(l=>l.status===stage);
+  const active  = leads.filter(l=>!['Client','Not Interested'].includes(l.status)).length;
+  const coldCnt = leads.filter(l=>daysSince(l.updatedAt)>=3&&!['Client','Not Interested'].includes(l.status)).length;
+  const fnaCnt  = leads.filter(l=>l.status==='Carryback Set').length;
+
+  const prev = () => setStageIdx(i=>(i-1+ACTIVE_STAGES.length)%ACTIVE_STAGES.length);
+  const next = () => setStageIdx(i=>(i+1)%ACTIVE_STAGES.length);
+
   return (
     <div className="fade-up">
-      <div style={{ ...row(), marginBottom:6 }}>
+      <div style={{ ...row(), marginBottom:20 }}>
         <div style={{ fontSize:isMobile?18:24, fontWeight:900, color:C.text }}>Pipeline</div>
-        <div style={{ fontSize:12, color:C.textDim }}>{active} active lead{active!==1?'s':''}</div>
+        <div style={{ fontSize:12, color:C.textDim }}>{active} active</div>
       </div>
-      <div style={{ fontSize:12, color:C.textDim, marginBottom:18 }}>Tap any card to edit or move a lead</div>
-      <div style={{ display:'flex', gap:12, overflowX:'auto', paddingBottom:16 }}>
-        {stages.map(stage=>{
-          const sl=leads.filter(l=>l.status===stage);
-          const color=SC[stage]||C.gray;
-          return (
-            <div key={stage} style={{ minWidth:200, flex:'0 0 200px', background:C.card, border:'1px solid '+C.border, borderRadius:14, padding:14, borderTop:'3px solid '+color }}>
-              <div style={{ ...row(), marginBottom:12 }}>
-                <div style={{ fontSize:11, fontWeight:800, color, letterSpacing:1.5 }}>{stage.toUpperCase()}</div>
-                <span style={pill(color,true)}>{sl.length}</span>
-              </div>
-              {sl.map(l=>(
-                <div key={l.id} onClick={()=>setSelectedContact(l)} className="card-lift"
-                  style={{ background:C.bgAlt, border:'1px solid '+C.border, borderRadius:10, padding:'10px 12px', marginBottom:8, cursor:'pointer' }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:4 }}>
-                    <Avatar name={l.name} size={26}/>
-                    <div style={{ fontSize:13, fontWeight:700, color:C.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{l.name}</div>
+
+      {/* Stage navigator */}
+      <div style={{ ...row(), marginBottom:10 }}>
+        <button onClick={prev} style={{ background:C.card, border:'1px solid '+C.border, borderRadius:10, color:C.text, width:40, height:40, fontSize:20, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>‹</button>
+        <div style={{ flex:1, textAlign:'center' }}>
+          <div style={{ fontSize:20, fontWeight:900, color, letterSpacing:-0.5 }}>{stage}</div>
+          <div style={{ fontSize:12, color:C.textDim, marginTop:2 }}>{cards.length} contact{cards.length!==1?'s':''}</div>
+        </div>
+        <button onClick={next} style={{ background:C.card, border:'1px solid '+C.border, borderRadius:10, color:C.text, width:40, height:40, fontSize:20, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0 }}>›</button>
+      </div>
+
+      {/* Progress dots */}
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'center', gap:6, marginBottom:20 }}>
+        {ACTIVE_STAGES.map((s,i)=>(
+          <div key={s} onClick={()=>setStageIdx(i)} style={{
+            height:6, borderRadius:99, cursor:'pointer',
+            width: i===stageIdx?24:6,
+            background: i===stageIdx?(SC[s]||C.blue):C.border,
+            transition:'all 0.25s ease',
+          }}/>
+        ))}
+      </div>
+
+      {/* Cards */}
+      <div style={{ minHeight:200 }}>
+        {cards.length===0
+          ? <EmptyState icon="✨" title={'No one in '+stage} sub="Move contacts here as you work your pipeline"/>
+          : cards.map(l=>(
+            <div key={l.id} onClick={()=>setSelectedContact(l)} className="card-lift"
+              style={{ ...cardS({ borderLeft:'3px solid '+color, cursor:'pointer', padding:'14px 16px' }) }}>
+              <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+                <Avatar name={l.name} size={42}/>
+                <div style={{ flex:1, minWidth:0 }}>
+                  <div style={{ ...row('flex-start'), gap:7, marginBottom:5, flexWrap:'wrap' }}>
+                    <div style={{ fontSize:14, fontWeight:700, color:C.text }}>{l.name}</div>
+                    {l.temperature&&<span style={pill(TEMP_COLORS[l.temperature]||C.gray,true)}>{l.temperature==='Cold'?'🧊':l.temperature==='Warm'?'🔆':'🔥'} {l.temperature}</span>}
+                    {l.isClientProspect&&<span style={pill(C.blue,true)}>💼</span>}
+                    {l.isRecruitProspect&&<span style={pill(C.purple,true)}>🤝</span>}
                   </div>
-                  <div style={{ fontSize:11, color:C.textDim }}>{l.phone}</div>
-                  {l.referredBy&&<div style={{ fontSize:10, color:C.teal, marginTop:3 }}>👤 {l.referredBy}</div>}
-                  {l.followUp&&<div style={{ fontSize:10, color:C.gold, marginTop:4 }}>📅 {fmt(l.followUp)}</div>}
-                  {daysSince(l.updatedAt)>=3&&<div style={{ fontSize:10, color:C.rose, marginTop:2 }}>{daysSince(l.updatedAt)}d cold</div>}
+                  <div style={{ fontSize:12, color:C.textDim, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{l.phone}</div>
+                  <div style={{ display:'flex', gap:10, marginTop:4, flexWrap:'wrap' }}>
+                    {l.referredBy&&<span style={{ fontSize:11, color:C.teal }}>👤 {l.referredBy}</span>}
+                    {l.ageGroup&&<span style={{ fontSize:11, color:C.purple }}>👤 {l.ageGroup}</span>}
+                    {l.followUp&&<span style={{ fontSize:11, color:C.gold }}>📅 {fmt(l.followUp)}</span>}
+                    {daysSince(l.updatedAt)>=3&&<span style={{ fontSize:11, color:C.rose }}>{daysSince(l.updatedAt)}d cold</span>}
+                  </div>
                 </div>
-              ))}
-              {sl.length===0&&<div style={{ fontSize:11, color:C.textDim, textAlign:'center', padding:'20px 0' }}>Empty</div>}
+                <div style={{ display:'flex', flexDirection:'column', gap:6, flexShrink:0 }}>
+                  {l.phone&&<a href={'tel:'+l.phone} onClick={e=>e.stopPropagation()} style={{ ...btn(C.gEmerald,true), textDecoration:'none', padding:'7px 10px', fontSize:15 }}>📞</a>}
+                  {l.phone&&<a href={'sms:'+l.phone}  onClick={e=>e.stopPropagation()} style={{ ...btn(C.gSky,true),     textDecoration:'none', padding:'7px 10px', fontSize:15 }}>💬</a>}
+                </div>
+              </div>
             </div>
-          );
-        })}
+          ))
+        }
+      </div>
+
+      {/* Summary bar */}
+      <div style={{ ...cardS({ marginTop:8, padding:'14px 18px' }), display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:0 }}>
+        {[
+          { val:active,  label:'Total Active', color:C.blue },
+          { val:fnaCnt,  label:'Carrybacks Set', color:C.gold },
+          { val:coldCnt, label:'Cold Leads', color:C.rose },
+        ].map((s,i)=>(
+          <div key={i} style={{ textAlign:'center', borderRight:i<2?'1px solid '+C.border:'none', padding:'0 10px' }}>
+            <div style={{ fontSize:24, fontWeight:900, color:s.color }}>{s.val}</div>
+            <div style={{ fontSize:10, color:C.textDim, marginTop:2 }}>{s.label}</div>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -2345,6 +2422,7 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState('All');
   const [tempFilter,   setTempFilter]   = useState('All');
   const [ageFilter,    setAgeFilter]    = useState('All');
+  const [prospectFilter, setProspectFilter] = useState('All');
   const [selectedContact, setSelectedContact] = useState(null);
 
   useEffect(() => {
@@ -2365,7 +2443,7 @@ export default function App() {
 
   const today      = new Date().toISOString().split('T')[0];
   const followUps  = [...leads,...recruits].filter(l=>l.followUp===today);
-  const coldLeads  = leads.filter(l=>daysSince(l.updatedAt)>=3&&!['Closed Won','Closed Lost'].includes(l.status));
+  const coldLeads  = leads.filter(l=>daysSince(l.updatedAt)>=3&&!['Client','Not Interested'].includes(l.status));
   const alertCount = coldLeads.length+followUps.length;
 
   const stats = {
@@ -2380,8 +2458,9 @@ export default function App() {
     const ok=!q||l.name?.toLowerCase().includes(q)||l.phone?.includes(q)||l.email?.toLowerCase().includes(q);
     const okStatus = statusFilter==='All'||l.status===statusFilter;
     const okTemp   = tempFilter==='All'||l.temperature===tempFilter;
-    const okAge    = ageFilter==='All'||l.ageGroup===ageFilter;
-    return ok&&okStatus&&okTemp&&okAge;
+    const okAge      = ageFilter==='All'||l.ageGroup===ageFilter;
+    const okProspect = prospectFilter==='All'||l[prospectFilter]===true;
+    return ok&&okStatus&&okTemp&&okAge&&okProspect;
   });
 
   function saveContact(c) {
@@ -2402,7 +2481,7 @@ export default function App() {
   const SW = 240;
 
   // Nav items — split between main and more on mobile
-  const MOBILE_MAIN = ['dashboard','contacts','pipeline','commission','fna'];
+  const MOBILE_MAIN = ['dashboard','contacts','pipeline','commission','calendar'];
   const MOBILE_MORE = NAV.filter(n=>!MOBILE_MAIN.includes(n.id));
 
   function NavBtn({ id, label, icon, extra }) {
@@ -2469,9 +2548,8 @@ export default function App() {
         )}
 
         {tab==='dashboard'  && <Dashboard  stats={stats} todos={todos} setTodos={setTodos} coldLeads={coldLeads} followUps={followUps} setSelectedContact={setSelectedContact} sales={sales} leads={leads} recruits={recruits} setTab={setTab} {...shared}/>}
-        {tab==='contacts'   && <Contacts   leads={leads} setLeads={setLeads} search={search} setSearch={setSearch} statusFilter={statusFilter} setStatusFilter={setStatusFilter} filteredLeads={filteredLeads} setSelectedContact={setSelectedContact} tempFilter={tempFilter} setTempFilter={setTempFilter} ageFilter={ageFilter} setAgeFilter={setAgeFilter} {...shared}/>}
+        {tab==='contacts'   && <Contacts   leads={leads} setLeads={setLeads} search={search} setSearch={setSearch} statusFilter={statusFilter} setStatusFilter={setStatusFilter} filteredLeads={filteredLeads} setSelectedContact={setSelectedContact} tempFilter={tempFilter} setTempFilter={setTempFilter} ageFilter={ageFilter} setAgeFilter={setAgeFilter} prospectFilter={prospectFilter} setProspectFilter={setProspectFilter} {...shared}/>}
         {tab==='pipeline'   && <Pipeline   leads={leads} setSelectedContact={setSelectedContact} {...shared}/>}
-        {tab==='fna'        && <FNATracker fnas={fnas} setFnas={setFnas} leads={leads} setSelectedContact={setSelectedContact} {...shared}/>}
         {tab==='calendar'   && <AppointmentCalendar leads={leads} recruits={recruits} fnas={fnas} {...shared}/>}
         {tab==='recruits'   && <Recruits   recruits={recruits} setRecruits={setRecruits} setSelectedContact={setSelectedContact} search={search} {...shared}/>}
         {tab==='team'       && <Team       team={team} setTeam={setTeam} {...shared}/>}
