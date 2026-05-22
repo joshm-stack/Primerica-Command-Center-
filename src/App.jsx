@@ -531,10 +531,21 @@ function ContactModal({ contact, onClose, onSave, onDelete, isRecruit, leads }) 
         {tab==='info'&&(
           <>
             <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12 }}>
-              {[['name','Name','text'],['phone','Phone','tel'],['email','Email','email'],['followUp','Follow-up','date'],['birthday','Birthday','date'],['anniversary','Anniversary','date']].map(([k,label,type]) => (
+              {[['name','Name','text'],['phone','Phone','tel'],['email','Email','email']].map(([k,label,type]) => (
                 <div key={k}>
                   <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>{label.toUpperCase()}</div>
                   <input type={type} value={c[k]||''} onChange={e=>upd(k,e.target.value)} style={inp()} placeholder={label}/>
+                </div>
+              ))}
+              {/* Follow-up, Birthday, Anniversary — optional date fields */}
+              {[['followUp','Follow-up (optional)'],['birthday','Birthday (optional)'],['anniversary','Anniversary (optional)']].map(([k,label]) => (
+                <div key={k}>
+                  <div style={{ fontSize:11, color:C.textDim, marginBottom:4, letterSpacing:0.5 }}>{label.toUpperCase()}</div>
+                  <input type='date' value={c[k]||''} onChange={e=>upd(k,e.target.value)}
+                    style={{ ...inp(), colorScheme:'dark' }}
+                    placeholder='Not set'
+                    autoComplete='off'/>
+                  {c[k]&&<button onClick={()=>upd(k,'')} style={{ background:'none', border:'none', color:C.rose, fontSize:11, cursor:'pointer', marginTop:3, padding:0 }}>✕ Clear date</button>}
                 </div>
               ))}
             </div>
