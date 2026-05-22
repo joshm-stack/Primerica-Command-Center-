@@ -27,60 +27,58 @@ async function dbSet(key, value) {
   } catch {}
 }
 
-// ─── GOOGLE CALENDAR API (via Anthropic MCP proxy) ───────────────────────────
-const GCAL_MCP_URL = 'https://calendarmcp.googleapis.com/mcp/v1';
+// ─── GOOGLE CALENDAR API (via Supabase Edge Function proxy) ─────────────────
+// Deploy the edge function from /api/gcal-proxy.js — see instructions below.
+// The proxy handles OAuth token refresh and forwards to Google Calendar API.
+const GCAL_PROXY = `${SB_URL}/functions/v1/gcal-proxy`;
 
-async function gcalCreateEvent({ summary, startTime, endTime, description, location, colorId }) {
+async function gcalFetch(path, options = {}) {
   try {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch(GCAL_PROXY, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 1000,
-        mcp_servers: [{ type: 'url', url: GCAL_MCP_URL, name: 'gcal' }],
-        messages: [{ role: 'user', content:
-          `Create a Google Calendar event with these exact details and confirm when done:
-           Title: ${summary}
-           Start: ${startTime}
-           End: ${endTime}
-           ${description ? 'Description: ' + description : ''}
-           ${location ? 'Location: ' + location : ''}
-           ${colorId ? 'Color ID: ' + colorId : ''}
-           Use the create_event tool. Reply only with: CREATED or ERROR.`
-        }]
-      })
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}`,
+      },
+      body: JSON.stringify({ path, ...options }),
     });
-    const data = await res.json();
-    const text = data.content?.find(b => b.type === 'text')?.text || '';
-    return text.includes('CREATED') || text.includes('created') || data.content?.some(b => b.type === 'mcp_tool_result');
-  } catch { return false; }
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
 }
 
-async function gcalListUpcoming() {
-  try {
-    const now = new Date().toISOString();
-    const future = new Date(Date.now() + 14 * 86400000).toISOString();
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 2000,
-        mcp_servers: [{ type: 'url', url: GCAL_MCP_URL, name: 'gcal' }],
-        messages: [{ role: 'user', content:
-          `List my Google Calendar events from ${now} to ${future}. Use list_events tool. Return ONLY a JSON array (no markdown) of objects with keys: title, start, end, location. If none, return [].`
-        }]
-      })
-    });
-    const data = await res.json();
-    const text = data.content?.find(b => b.type === 'text')?.text || '[]';
-    const clean = text.replace(/```json|```/g, '').trim();
-    const start = clean.indexOf('[');
-    const end = clean.lastIndexOf(']');
-    if (start === -1 || end === -1) return [];
-    return JSON.parse(clean.slice(start, end + 1));
-  } catch { return []; }
+// ── Parse Google Calendar event into normalized shape ────────────────────────
+function parseGcalEvent(e) {
+  const startRaw = e.start?.dateTime || e.start?.date || '';
+  const endRaw   = e.end?.dateTime   || e.end?.date   || '';
+  const dateStr  = startRaw.split('T')[0];
+  const timeStr  = startRaw.includes('T')
+    ? new Date(startRaw).toLocaleTimeString('en-US',{ hour:'numeric', minute:'2-digit', hour12:true })
+    : '';
+  return {
+    id: e.id, title: e.summary || 'Event',
+    date: dateStr, time: timeStr,
+    start: startRaw, end: endRaw,
+    location: e.location || '',
+    source: 'gcal',
+  };
+}
+
+async function gcalListUpcoming(monthsAhead = 2) {
+  const now    = new Date().toISOString();
+  const future = new Date(Date.now() + monthsAhead * 30 * 86400000).toISOString();
+  const data   = await gcalFetch('/events', { startTime: now, endTime: future, orderBy: 'startTime', pageSize: 50 });
+  if (!data?.events) return [];
+  return data.events.map(parseGcalEvent);
+}
+
+async function gcalCreateEvent({ summary, startTime, endTime, description, location }) {
+  const data = await gcalFetch('/events/create', {
+    summary, startTime, endTime,
+    description: description || '',
+    location: location || '',
+  });
+  return !!data?.id;
 }
 
 // ─── ONE-TIME MIGRATION: localStorage → Supabase ─────────────────────────────
@@ -1058,165 +1056,337 @@ function FNATracker({ fnas, setFnas, leads, isMobile, toast, setSelectedContact 
 
 // ─── PAGE: APPOINTMENT CALENDAR ───────────────────────────────────────────────
 function AppointmentCalendar({ leads, recruits, fnas, isMobile }) {
-  const [viewMode, setViewMode]   = useState('week');
-  const [weekOffset, setWeekOffset] = useState(0);
-  const [gcalEvents, setGcalEvents] = useState([]);
+  const [viewMode, setViewMode]     = useState('month');
+  const [monthOffset, setMonthOffset] = useState(0);
+  const [weekOffset, setWeekOffset]   = useState(0);
+  const [gcalEvents, setGcalEvents]   = useState([]);
   const [gcalLoading, setGcalLoading] = useState(false);
-  const [gcalError, setGcalError] = useState(false);
+  const [gcalStatus, setGcalStatus]   = useState('idle'); // idle | ok | error
+  const [selectedDay, setSelectedDay] = useState(null);
 
   const today = new Date();
   today.setHours(0,0,0,0);
 
   const loadGcalEvents = async () => {
     setGcalLoading(true);
-    setGcalError(false);
-    const events = await gcalListUpcoming();
-    if (events && events.length >= 0) {
+    setGcalStatus('idle');
+    const events = await gcalListUpcoming(3);
+    if (Array.isArray(events)) {
       setGcalEvents(events);
+      setGcalStatus('ok');
     } else {
-      setGcalError(true);
+      setGcalStatus('error');
     }
     setGcalLoading(false);
   };
 
   useEffect(() => { loadGcalEvents(); }, []);
 
-  // Build events from all sources
+  // ── Build unified event list ───────────────────────────────────────────────
   const allEvents = [];
-
-  leads.forEach(l=>{
-    if (l.followUp) allEvents.push({ date:l.followUp, label:l.name, type:'Follow Up', color:C.gold, contact:l, source:'crm' });
-    if (l.status==='FNA Scheduled'&&l.followUp) allEvents.push({ date:l.followUp, label:'FNA: '+l.name, type:'FNA', color:C.gold, contact:l, source:'crm' });
+  leads.forEach(l => {
+    if (l.followUp) allEvents.push({ date:l.followUp, label:l.name, type:'Follow-up', color:C.gold, time:'', source:'crm' });
   });
-  recruits.forEach(r=>{
-    if (r.followUp) allEvents.push({ date:r.followUp, label:r.name+' (recruit)', type:'Recruit', color:C.purple, contact:r, source:'crm' });
+  recruits.forEach(r => {
+    if (r.followUp) allEvents.push({ date:r.followUp, label:r.name, type:'Recruit', color:C.purple, time:'', source:'crm' });
   });
-  fnas.forEach(f=>{
-    if (f.date&&f.status!=='Cancelled') allEvents.push({ date:f.date, label:'FNA: '+f.contactName, type:'FNA', color:C.gold, time:f.time, source:'crm' });
+  fnas.forEach(f => {
+    if (f.date && f.status !== 'Cancelled')
+      allEvents.push({ date:f.date, label:f.contactName, type:'FNA', color:C.gold, time:f.time||'', source:'crm' });
   });
-  // Google Calendar events
-  gcalEvents.forEach(e=>{
-    if (e.start) {
-      const dateStr = e.start.split('T')[0];
-      const timeStr = e.start.includes('T') ? e.start.split('T')[1].slice(0,5) : '';
-      allEvents.push({ date:dateStr, label:e.title||'GCal Event', type:'Google Cal', color:C.teal, time:timeStr, location:e.location||'', source:'gcal' });
-    }
+  gcalEvents.forEach(e => {
+    allEvents.push({ date:e.date, label:e.title, type:'GCal', color:C.teal, time:e.time||'', location:e.location||'', source:'gcal' });
   });
 
-  // Get week start
+  const getEventsForDay = d => {
+    const ds = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    return allEvents.filter(e => e.date === ds);
+  };
+
+  // ── Month grid ─────────────────────────────────────────────────────────────
+  const monthBase = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+  const monthName = monthBase.toLocaleDateString('en-US', { month:'long', year:'numeric' });
+  const firstDow  = monthBase.getDay();
+  const daysInMon = new Date(monthBase.getFullYear(), monthBase.getMonth()+1, 0).getDate();
+  const gridCells = [];
+  for (let i = 0; i < firstDow; i++) gridCells.push(null);
+  for (let d = 1; d <= daysInMon; d++) gridCells.push(new Date(monthBase.getFullYear(), monthBase.getMonth(), d));
+
+  // ── Week grid ──────────────────────────────────────────────────────────────
   const weekStart = new Date(today);
-  weekStart.setDate(today.getDate()-today.getDay()+weekOffset*7);
+  weekStart.setDate(today.getDate() - today.getDay() + weekOffset * 7);
+  const weekDays  = Array.from({ length:7 }, (_,i) => { const d = new Date(weekStart); d.setDate(weekStart.getDate()+i); return d; });
 
-  const days = viewMode==='week'
-    ? Array.from({length:7},(_,i)=>{ const d=new Date(weekStart); d.setDate(weekStart.getDate()+i); return d; })
-    : [today];
+  // ── Upcoming list ──────────────────────────────────────────────────────────
+  const upcoming = allEvents
+    .filter(e => e.date >= today.toISOString().split('T')[0])
+    .sort((a,b) => a.date.localeCompare(b.date));
 
-  const getEventsForDay = d => allEvents.filter(e=>{ if(!e.date) return false; const ed=new Date(e.date); ed.setHours(0,0,0,0); return isSameDay(ed,d); });
+  // ── Day detail (selected day popup) ───────────────────────────────────────
+  const dayEvents = selectedDay ? getEventsForDay(selectedDay) : [];
 
-  const upcomingAll = allEvents.filter(e=>{ if(!e.date) return false; const d=new Date(e.date); return d>=today; }).sort((a,b)=>new Date(a.date)-new Date(b.date));
+  const TYPE_ICON = { 'FNA':'📋', 'Follow-up':'📞', 'Recruit':'🤝', 'GCal':'📅' };
 
   return (
     <div className="fade-up">
-      <div style={{ ...row(), marginBottom:14, flexWrap:'wrap', gap:10 }}>
+
+      {/* ── Header ── */}
+      <div style={{ ...row(), marginBottom:16, flexWrap:'wrap', gap:10 }}>
         <div>
-          <div style={{ fontSize:isMobile?18:24, fontWeight:900, color:C.text }}>Calendar</div>
-          <div style={{ fontSize:12, color:C.textDim, marginTop:3 }}>FNAs · Follow-ups · Callbacks · Google Cal</div>
+          <div style={{ fontSize:isMobile?20:26, fontWeight:900, color:C.text, letterSpacing:-0.5 }}>Calendar</div>
+          <div style={{ display:'flex', alignItems:'center', gap:8, marginTop:4 }}>
+            {gcalStatus==='ok' && <><span className="live-dot" style={{ width:6, height:6, borderRadius:'50%', background:C.teal, display:'inline-block' }}/><span style={{ fontSize:11, color:C.teal, fontWeight:600 }}>Google Cal synced · {gcalEvents.length} events</span></>}
+            {gcalStatus==='error' && <span style={{ fontSize:11, color:C.rose }}>⚠ GCal needs setup · see instructions</span>}
+            {gcalStatus==='idle' && gcalLoading && <span style={{ fontSize:11, color:C.textDim }}>Loading...</span>}
+          </div>
         </div>
-        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
-          {['week','upcoming'].map(v=>(
-            <button key={v} onClick={()=>setViewMode(v)} style={{
-              padding:'6px 14px', borderRadius:9, fontSize:12, fontWeight:700, cursor:'pointer', border:'none',
-              background:viewMode===v?C.gBlue:'none',
-              color:viewMode===v?'#fff':C.textDim,
-              outline:viewMode!==v?'1px solid '+C.border:'none',
-            }}>{v==='week'?'Week View':'Upcoming'}</button>
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap', alignItems:'center' }}>
+          {['month','week','upcoming'].map(v => (
+            <button key={v} onClick={() => setViewMode(v)} style={{
+              padding:'6px 14px', borderRadius:9, fontSize:12, fontWeight:700, cursor:'pointer',
+              background: viewMode===v ? C.gBlue : 'none',
+              border: viewMode===v ? 'none' : '1px solid ' + C.border,
+              color: viewMode===v ? '#fff' : C.textDim,
+            }}>{v==='month'?'Month':v==='week'?'Week':'Upcoming'}</button>
           ))}
           <button onClick={loadGcalEvents} disabled={gcalLoading} style={{
-            padding:'6px 14px', borderRadius:9, fontSize:12, fontWeight:700, cursor:'pointer',
-            background:C.teal+'18', border:'1px solid '+C.teal+'40', color:gcalLoading?C.textDim:C.teal,
-            display:'flex', alignItems:'center', gap:5,
+            padding:'6px 12px', borderRadius:9, fontSize:11, fontWeight:700, cursor:'pointer',
+            background: C.teal+'15', border:'1px solid '+C.teal+'40', color: gcalLoading?C.textDim:C.teal,
+            display:'flex', alignItems:'center', gap:4,
           }}>
             {gcalLoading
-              ? <><span className="spinner" style={{ display:'inline-block', width:10, height:10, border:'2px solid '+C.teal+'44', borderTop:'2px solid '+C.teal, borderRadius:'50%' }}/> Syncing...</>
-              : <>🔄 Sync GCal ({gcalEvents.length})</>
-            }
+              ? <span className="spinner" style={{ display:'inline-block', width:9, height:9, border:'2px solid '+C.teal+'44', borderTop:'2px solid '+C.teal, borderRadius:'50%' }}/>
+              : '🔄'} Sync
           </button>
         </div>
       </div>
 
-      {/* GCal legend */}
-      <div style={{ display:'flex', gap:12, flexWrap:'wrap', marginBottom:14 }}>
-        {[['CRM Events',C.gold],['Recruits',C.purple],['Google Calendar',C.teal]].map(([label,color])=>(
+      {/* ── Legend ── */}
+      <div style={{ display:'flex', gap:14, marginBottom:16, flexWrap:'wrap' }}>
+        {[['FNA',C.gold],['Follow-up',C.gold],['Recruit',C.purple],['Google Cal',C.teal]].map(([label,color])=>(
           <div key={label} style={{ display:'flex', alignItems:'center', gap:5 }}>
-            <div style={{ width:8, height:8, borderRadius:'50%', background:color }}/>
-            <span style={{ fontSize:11, color:C.textDim }}>{label}</span>
+            <div style={{ width:7, height:7, borderRadius:2, background:color, flexShrink:0 }}/>
+            <span style={{ fontSize:11, color:C.textDim, fontWeight:500 }}>{label}</span>
           </div>
         ))}
       </div>
 
-      {viewMode==='week'&&(
-        <>
-          <div style={{ ...row(), marginBottom:14 }}>
-            <button onClick={()=>setWeekOffset(w=>w-1)} style={{ background:C.border, border:'none', borderRadius:8, color:C.text, padding:'6px 14px', cursor:'pointer', fontWeight:700 }}>‹ Prev</button>
-            <div style={{ fontSize:13, fontWeight:700, color:C.text }}>
-              {weekStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})} – {new Date(weekStart.getTime()+6*86400000).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}
-            </div>
-            <button onClick={()=>setWeekOffset(w=>w+1)} style={{ background:C.border, border:'none', borderRadius:8, color:C.text, padding:'6px 14px', cursor:'pointer', fontWeight:700 }}>Next ›</button>
+      {/* ── MONTH VIEW ── */}
+      {viewMode==='month' && (
+        <div style={cardS({ padding:'18px 16px' })}>
+          {/* Month nav */}
+          <div style={{ ...row(), marginBottom:20 }}>
+            <button onClick={() => setMonthOffset(m=>m-1)} style={{ background:'none', border:'1px solid '+C.border, borderRadius:8, color:C.text, padding:'6px 14px', cursor:'pointer', fontWeight:700, fontSize:16 }}>‹</button>
+            <div style={{ fontSize:16, fontWeight:800, color:C.text }}>{monthName}</div>
+            <button onClick={() => setMonthOffset(m=>m+1)} style={{ background:'none', border:'1px solid '+C.border, borderRadius:8, color:C.text, padding:'6px 14px', cursor:'pointer', fontWeight:700, fontSize:16 }}>›</button>
           </div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:6, marginBottom:4 }}>
-            {['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=>(
-              <div key={d} style={{ fontSize:10, color:C.textDim, textAlign:'center', fontWeight:700, letterSpacing:1, paddingBottom:6 }}>{d}</div>
+
+          {/* Day headers */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:4, marginBottom:6 }}>
+            {['Su','Mo','Tu','We','Th','Fr','Sa'].map(d => (
+              <div key={d} style={{ textAlign:'center', fontSize:11, fontWeight:700, color:C.textDim, letterSpacing:1, paddingBottom:8 }}>{d}</div>
             ))}
           </div>
-          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:6 }}>
-            {days.map((d,i)=>{
-              const evs = getEventsForDay(d);
-              const isToday = isSameDay(d,new Date());
+
+          {/* Grid cells */}
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:4 }}>
+            {gridCells.map((d, i) => {
+              if (!d) return <div key={i}/>;
+              const evs      = getEventsForDay(d);
+              const isToday  = isSameDay(d, new Date());
+              const isSel    = selectedDay && isSameDay(d, selectedDay);
+              const hasEvs   = evs.length > 0;
               return (
-                <div key={i} style={{ background:isToday?C.blue+'15':C.card, border:'1px solid '+(isToday?C.blue+'50':C.border), borderRadius:12, padding:'10px 8px', minHeight:90 }}>
-                  <div style={{ fontSize:14, fontWeight:isToday?900:600, color:isToday?C.blue:C.text, textAlign:'center', marginBottom:6 }}>{d.getDate()}</div>
-                  {evs.map((e,j)=>(
-                    <div key={j} style={{ background:e.color+'20', border:'1px solid '+e.color+'40', borderRadius:6, padding:'3px 6px', marginBottom:3 }}>
-                      <div style={{ fontSize:10, fontWeight:700, color:e.color, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{e.label}</div>
-                      {e.time&&<div style={{ fontSize:9, color:C.textDim }}>{e.time}</div>}
-                    </div>
-                  ))}
+                <div key={i} onClick={() => setSelectedDay(isSel ? null : d)}
+                  style={{
+                    borderRadius:10, padding:'8px 4px 6px', cursor:hasEvs?'pointer':'default',
+                    background: isToday ? C.blue+'20' : isSel ? C.purple+'18' : hasEvs ? C.card : 'transparent',
+                    border: isToday ? '1.5px solid '+C.blue+'60' : isSel ? '1.5px solid '+C.purple+'60' : '1px solid transparent',
+                    minHeight: isMobile ? 52 : 72,
+                    transition: 'background 0.15s, border 0.15s',
+                    position: 'relative',
+                  }}>
+                  <div style={{
+                    textAlign:'center', fontSize:13, fontWeight: isToday?900:500,
+                    color: isToday?C.blue : hasEvs?C.text : C.textSub,
+                    marginBottom:4,
+                  }}>{d.getDate()}</div>
+                  {/* Event dots / pills */}
+                  <div style={{ display:'flex', flexDirection:'column', gap:2, alignItems:'stretch' }}>
+                    {evs.slice(0,isMobile?2:3).map((e,j) => (
+                      <div key={j} style={{
+                        background: e.color+'25', borderRadius:4,
+                        padding:'1px 4px', overflow:'hidden',
+                      }}>
+                        <div style={{ fontSize:9, fontWeight:700, color:e.color, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>
+                          {TYPE_ICON[e.type]} {e.label}
+                        </div>
+                      </div>
+                    ))}
+                    {evs.length > (isMobile?2:3) && (
+                      <div style={{ fontSize:9, color:C.textDim, textAlign:'center', fontWeight:600 }}>+{evs.length-(isMobile?2:3)}</div>
+                    )}
+                  </div>
                 </div>
               );
             })}
           </div>
-        </>
-      )}
 
-      {viewMode==='upcoming'&&(
-        <>
-          <div style={{ fontSize:12, color:C.textDim, marginBottom:14 }}>{upcomingAll.length} upcoming event{upcomingAll.length!==1?'s':''}</div>
-          {upcomingAll.length===0
-            ? <EmptyState icon="📅" title="Nothing scheduled" sub="Add follow-up dates to contacts or schedule FNAs to populate your calendar"/>
-            : upcomingAll.slice(0,30).map((e,i)=>{
-              const d = new Date(e.date);
-              const daysAway = Math.ceil((d-today)/86400000);
-              return (
-                <div key={i} style={cardS({ borderLeft:'3px solid '+e.color, padding:'12px 16px' })}>
-                  <div style={row()}>
-                    <div>
+          {/* Day detail panel */}
+          {selectedDay && (
+            <div style={{ marginTop:16, background:C.bgAlt, borderRadius:14, padding:'16px', border:'1px solid '+C.border }}>
+              <div style={{ ...row(), marginBottom:12 }}>
+                <div style={{ fontSize:14, fontWeight:800, color:C.text }}>
+                  {selectedDay.toLocaleDateString('en-US',{ weekday:'long', month:'long', day:'numeric' })}
+                </div>
+                <button onClick={()=>setSelectedDay(null)} style={{ background:'none', border:'none', color:C.textDim, cursor:'pointer', fontSize:18 }}>×</button>
+              </div>
+              {dayEvents.length === 0
+                ? <div style={{ fontSize:12, color:C.textDim, textAlign:'center', padding:'12px 0' }}>No events this day</div>
+                : dayEvents.map((e,i) => (
+                  <div key={i} style={{ display:'flex', alignItems:'flex-start', gap:12, padding:'10px 0', borderBottom: i<dayEvents.length-1?'1px solid '+C.border:'none' }}>
+                    <div style={{ width:34, height:34, borderRadius:9, background:e.color+'20', display:'flex', alignItems:'center', justifyContent:'center', fontSize:16, flexShrink:0 }}>
+                      {TYPE_ICON[e.type]||'📅'}
+                    </div>
+                    <div style={{ flex:1 }}>
                       <div style={{ fontSize:13, fontWeight:700, color:C.text }}>{e.label}</div>
-                      <div style={{ fontSize:11, color:C.textDim, marginTop:2 }}>
-                        {fmtFull(e.date)}{e.time&&' · '+e.time}
+                      <div style={{ display:'flex', gap:8, marginTop:3, flexWrap:'wrap' }}>
+                        <span style={pill(e.color,true)}>{e.type}</span>
+                        {e.time && <span style={{ fontSize:11, color:C.textDim }}>🕐 {e.time}</span>}
+                        {e.location && <span style={{ fontSize:11, color:C.textDim }}>📍 {e.location}</span>}
                       </div>
                     </div>
-                    <div style={{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:4 }}>
-                      <span style={pill(e.color,true)}>{e.type}</span>
-                      <span style={{ fontSize:11, color:daysAway===0?C.rose:daysAway<=3?C.gold:C.textDim }}>
-                        {daysAway===0?'Today':daysAway===1?'Tomorrow':daysAway+'d away'}
-                      </span>
+                  </div>
+                ))
+              }
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── WEEK VIEW ── */}
+      {viewMode==='week' && (
+        <div style={cardS({ padding:'16px' })}>
+          <div style={{ ...row(), marginBottom:18 }}>
+            <button onClick={()=>setWeekOffset(w=>w-1)} style={{ background:'none', border:'1px solid '+C.border, borderRadius:8, color:C.text, padding:'6px 14px', cursor:'pointer', fontWeight:700 }}>‹</button>
+            <div style={{ fontSize:14, fontWeight:700, color:C.text, textAlign:'center' }}>
+              {weekStart.toLocaleDateString('en-US',{month:'short',day:'numeric'})} –{' '}
+              {new Date(weekStart.getTime()+6*86400000).toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+            </div>
+            <button onClick={()=>setWeekOffset(w=>w+1)} style={{ background:'none', border:'1px solid '+C.border, borderRadius:8, color:C.text, padding:'6px 14px', cursor:'pointer', fontWeight:700 }}>›</button>
+          </div>
+
+          <div style={{ display:'grid', gridTemplateColumns:'repeat(7,1fr)', gap:6 }}>
+            {weekDays.map((d,i) => {
+              const evs     = getEventsForDay(d);
+              const isToday = isSameDay(d, new Date());
+              return (
+                <div key={i} style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                  {/* Day label */}
+                  <div style={{
+                    textAlign:'center', padding:'6px 4px 8px',
+                    borderBottom:'2px solid '+(isToday?C.blue:C.border),
+                  }}>
+                    <div style={{ fontSize:10, color:isToday?C.blue:C.textDim, fontWeight:700, letterSpacing:1 }}>
+                      {['SUN','MON','TUE','WED','THU','FRI','SAT'][d.getDay()]}
                     </div>
+                    <div style={{
+                      fontSize:18, fontWeight:isToday?900:600,
+                      color:isToday?'#fff':C.textSub,
+                      width:isToday?30:undefined, height:isToday?30:undefined,
+                      borderRadius:isToday?'50%':undefined,
+                      background:isToday?C.blue:undefined,
+                      display:'flex', alignItems:'center', justifyContent:'center',
+                      margin:isToday?'4px auto 0':'4px auto 0',
+                    }}>{d.getDate()}</div>
+                  </div>
+                  {/* Events */}
+                  <div style={{ display:'flex', flexDirection:'column', gap:4, minHeight:80, padding:'4px 2px' }}>
+                    {evs.map((e,j) => (
+                      <div key={j} style={{
+                        background:e.color+'20', border:'1px solid '+e.color+'40',
+                        borderRadius:7, padding:'5px 7px',
+                      }}>
+                        <div style={{ fontSize:10, fontWeight:700, color:e.color, lineHeight:1.4 }}>
+                          {TYPE_ICON[e.type]} {e.label}
+                        </div>
+                        {e.time && <div style={{ fontSize:9, color:C.textDim, marginTop:1 }}>{e.time}</div>}
+                      </div>
+                    ))}
+                    {evs.length === 0 && <div style={{ flex:1 }}/>}
                   </div>
                 </div>
               );
-            })
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* ── UPCOMING LIST ── */}
+      {viewMode==='upcoming' && (
+        <div>
+          {upcoming.length === 0
+            ? <EmptyState icon="📅" title="Nothing scheduled" sub="Add follow-up dates to contacts or schedule FNAs"/>
+            : (() => {
+                // Group by date
+                const grouped = {};
+                upcoming.forEach(e => {
+                  if (!grouped[e.date]) grouped[e.date] = [];
+                  grouped[e.date].push(e);
+                });
+                return Object.entries(grouped).slice(0,30).map(([date, evs]) => {
+                  const d = new Date(date + 'T12:00:00');
+                  const daysAway = Math.round((new Date(date)-today)/86400000);
+                  return (
+                    <div key={date} style={{ marginBottom:16 }}>
+                      {/* Date header */}
+                      <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
+                        <div style={{
+                          background: daysAway===0?C.blue:daysAway<=2?C.gold+'30':C.bgAlt,
+                          border:'1px solid '+(daysAway===0?C.blue+'50':daysAway<=2?C.gold+'40':C.border),
+                          borderRadius:10, padding:'5px 12px', display:'flex', flexDirection:'column', alignItems:'center', minWidth:46,
+                        }}>
+                          <div style={{ fontSize:9, fontWeight:800, color:daysAway===0?C.blue:C.textDim, letterSpacing:1 }}>
+                            {d.toLocaleDateString('en-US',{month:'short'}).toUpperCase()}
+                          </div>
+                          <div style={{ fontSize:20, fontWeight:900, color:daysAway===0?C.blue:C.text, lineHeight:1 }}>{d.getDate()}</div>
+                        </div>
+                        <div>
+                          <div style={{ fontSize:12, fontWeight:700, color:C.text }}>
+                            {d.toLocaleDateString('en-US',{weekday:'long'})}
+                          </div>
+                          <div style={{ fontSize:11, color:daysAway===0?C.blue:daysAway<=2?C.gold:C.textDim, fontWeight:600 }}>
+                            {daysAway===0?'Today':daysAway===1?'Tomorrow':`In ${daysAway} days`}
+                          </div>
+                        </div>
+                      </div>
+                      {/* Events for this date */}
+                      <div style={{ display:'flex', flexDirection:'column', gap:6, paddingLeft:58 }}>
+                        {evs.map((e,j) => (
+                          <div key={j} style={{
+                            background:C.card, border:'1px solid '+C.border,
+                            borderLeft:'3px solid '+e.color,
+                            borderRadius:10, padding:'10px 14px',
+                            display:'flex', alignItems:'center', gap:10,
+                          }}>
+                            <div style={{ fontSize:18, flexShrink:0 }}>{TYPE_ICON[e.type]||'📅'}</div>
+                            <div style={{ flex:1, minWidth:0 }}>
+                              <div style={{ fontSize:13, fontWeight:700, color:C.text, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{e.label}</div>
+                              <div style={{ display:'flex', gap:8, marginTop:2, flexWrap:'wrap' }}>
+                                <span style={pill(e.color,true)}>{e.type}</span>
+                                {e.time && <span style={{ fontSize:11, color:C.textDim }}>🕐 {e.time}</span>}
+                                {e.location && <span style={{ fontSize:11, color:C.textDim, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>📍 {e.location}</span>}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                });
+              })()
           }
-        </>
+        </div>
       )}
     </div>
   );
